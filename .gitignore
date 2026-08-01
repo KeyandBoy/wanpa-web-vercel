@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 output/
+outoutput/
 test_local/
 test_output/
 node_modules/
