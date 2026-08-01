@@ -560,7 +560,7 @@ onBeforeUnmount(() => {
 
         <el-form v-if="mode === 'image'" label-width="80px" label-position="left">
           <el-form-item label="关键词">
-            <el-input v-model="form.keyword" placeholder="例如: 猫" clearable />
+            <el-input v-model="form.keyword" clearable />
           </el-form-item>
           <el-form-item label="数据源">
             <div v-if="viewMode === 'simple'" class="simple-groups">
@@ -616,7 +616,6 @@ onBeforeUnmount(() => {
               v-model="form.customUrls"
               type="textarea"
               :rows="3"
-              placeholder="每行一个网址，如：https://twitter.com/xxx/status/123"
             />
           </el-form-item>
           <el-form-item label="数量">
@@ -643,7 +642,7 @@ onBeforeUnmount(() => {
 
         <el-form v-if="mode === 'novel'" label-width="80px" label-position="left">
           <el-form-item label="关键词">
-            <el-input v-model="nform.keyword" placeholder="例如: 黑丝" clearable />
+            <el-input v-model="nform.keyword" clearable />
           </el-form-item>
           <el-form-item label="数据源">
             <div class="source-groups">
