@@ -1,0 +1,106 @@
+import os
+import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import requests
+
+_cache = {}
+_lock = threading.Lock()
+
+LATIN = re.compile(r"[A-Za-z]{3,}")
+CN = re.compile(r"[\u4e00-\u9fff]")
+JP = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
+
+
+def _proxy():
+    p = (
+        os.environ.get("HTTPS_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTP_PROXY")
+        or os.environ.get("http_proxy")
+    )
+    if p:
+        return p
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("PROXY="):
+                    return line.strip().split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return None
+
+
+def has_chinese(text):
+    return bool(CN.search(text or ""))
+
+
+def needs_translate(text):
+    """标题翻译判定：英文为主、或含日文假名的标题需要翻成中文"""
+    if not text:
+        return False
+    if JP.search(text):
+        return True
+    cn_chars = len(CN.findall(text))
+    if cn_chars / max(len(text), 1) > 0.3:
+        return False
+    return bool(LATIN.search(text))
+
+
+def _one(text, target):
+    with _lock:
+        if text in _cache:
+            return _cache[text]
+    out = text
+    for attempt in range(3):
+        try:
+            proxies = None
+            p = _proxy()
+            if p:
+                proxies = {"http": p, "https": p}
+            # 含日文假名的文本强制以日语为源语言，否则 auto 会因汉字多而误判为中文
+            sl = "ja" if (target == "zh-CN" and JP.search(text)) else "auto"
+            r = requests.get(
+                "https://translate.googleapis.com/translate_a/single",
+                params={"client": "gtx", "sl": sl, "tl": target, "dt": "t", "q": text},
+                timeout=15,
+                proxies=proxies,
+            )
+            r.raise_for_status()
+            parts = r.json()[0]
+            joined = "".join(x[0] for x in parts if x and x[0]).strip()
+            if joined:
+                out = joined
+                break
+        except Exception:
+            time.sleep(0.4 * (attempt + 1))
+    with _lock:
+        _cache[text] = out
+    return out
+
+
+def to_zh(text):
+    if not text or not needs_translate(text):
+        return text
+    return _one(text, "zh-CN")
+
+
+def to_en(text):
+    if not text or not has_chinese(text):
+        return text
+    return _one(text, "en")
+
+
+def translate_many(texts):
+    """并发翻译一批标题(只翻需要翻的)，返回 {原文本: 翻译后}"""
+    texts = list(texts)
+    todo = [t for t in texts if t and needs_translate(t)]
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        list(ex.map(lambda t: _one(t, "zh-CN"), todo))
+    out = {}
+    with _lock:
+        for t in texts:
+            out[t] = _cache.get(t, t)
+    return out

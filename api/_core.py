@@ -1,0 +1,222 @@
+import json
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+
+from main_engine import (
+    HEADERS,
+    fetch_page_images,
+    http_get,
+    pixabay_page,
+    search_baidu_page,
+    search_bing_page,
+    search_duitang_page,
+    search_foamgirl_page,
+    search_giphy_page,
+    search_google_page,
+    search_huaban_page,
+    search_openverse_page,
+    search_pexels_page,
+    search_pxhere_page,
+    search_so360_page,
+    search_sogou_page,
+    search_tuchong_page,
+    search_twitter_page,
+    search_unsplash_page,
+    search_wallhaven_page,
+    search_wallhere_page,
+    search_wikimedia_page,
+    search_xiurenai_page,
+    search_yahoo_page,
+    search_yande_page,
+    search_youtube_page,
+)
+
+MAX_PROXY_BYTES = 25 * 1024 * 1024
+
+BLOCKED_HOSTS = re.compile(
+    r"^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|169\.254\.)",
+    re.I,
+)
+
+
+def api_search(keyword, source, page):
+    source = source.lower()
+    EN_SOURCES = {
+        "foamgirl", "openverse", "wikimedia", "wallhaven", "wallhere", "yande",
+        "pxhere", "pixabay", "unsplash", "giphy",
+    }
+    if source in EN_SOURCES:
+        try:
+            from trans_svc import has_chinese, to_en
+
+            if has_chinese(keyword):
+                keyword = to_en(keyword)
+        except Exception:
+            pass
+    if source == "bing":
+        items = search_bing_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "baidu":
+        items = search_baidu_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "pixabay":
+        items, has_more = pixabay_page(
+            keyword, page, os.environ.get("PIXABAY_KEY", "")
+        )
+    elif source == "sogou":
+        items = search_sogou_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "so360":
+        items = search_so360_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "huaban":
+        items = search_huaban_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "tuchong":
+        items = search_tuchong_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "google":
+        items = search_google_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "yahoo":
+        items = search_yahoo_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "youtube":
+        items = search_youtube_page(keyword, page)
+        has_more = bool(items)
+    elif source == "xiurenai":
+        items = search_xiurenai_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "foamgirl":
+        items = search_foamgirl_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "twitter":
+        items = search_twitter_page(keyword, page)
+        has_more = bool(items)
+    elif source == "unsplash":
+        items = search_unsplash_page(
+            keyword, page, os.environ.get("UNSPLASH_KEY", "")
+        )
+        has_more = bool(items)
+    elif source == "openverse":
+        items = search_openverse_page(keyword, page)
+        has_more = bool(items)
+    elif source == "wikimedia":
+        items = search_wikimedia_page(keyword, page)
+        has_more = bool(items)
+    elif source == "wallhaven":
+        items = search_wallhaven_page(keyword, page)
+        has_more = bool(items)
+    elif source == "pxhere":
+        items = search_pxhere_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "duitang":
+        items = search_duitang_page(keyword, page)
+        has_more = bool(items)
+    elif source == "pexels":
+        items = search_pexels_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "giphy":
+        items = search_giphy_page(keyword, page)
+        has_more = bool(items)
+    elif source == "wallhere":
+        items = search_wallhere_page(keyword, page)
+        has_more = bool(items)
+    elif source == "yande":
+        items = search_yande_page(keyword, page)
+        has_more = bool(items)
+    else:
+        raise ValueError("不支持的数据源: " + source)
+    if source == "foamgirl":
+        try:
+            from trans_svc import translate_many
+
+            titles = [i.get("title") or "" for i in items]
+            tr = translate_many(titles)
+            for i in items:
+                t = i.get("title") or ""
+                if t and tr.get(t) and tr[t] != t:
+                    i["title_en"] = t
+                    i["title"] = tr[t]
+        except Exception:
+            pass
+    return {"items": items, "has_more": has_more}
+
+
+def api_page_images(url):
+    items = fetch_page_images(url)
+    return {"items": items, "has_more": False}
+
+
+def api_proxy(url):
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("无效的图片地址")
+    host = url.split("/")[2].split(":")[0].lower()
+    if BLOCKED_HOSTS.match(host):
+        raise ValueError("该地址不允许访问")
+    headers = HEADERS
+    if host == "xr.afxfl.com":
+        from main_engine import _direct_session
+
+        headers = {**HEADERS, "Referer": "https://www.xiurenai.com/"}
+        r = http_get(url, timeout=25, retries=1, headers=headers, session=_direct_session())
+    else:
+        r = http_get(url, timeout=25, retries=1, headers=headers)
+    ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    if not ctype.startswith("image/"):
+        if ctype == "application/octet-stream" and re.search(
+            r"\.(jpe?g|png|gif|webp|bmp)(\?|$)", url, re.I
+        ):
+            ctype = "image/jpeg"
+        else:
+            raise ValueError("目标不是图片: " + ctype)
+    if len(r.content) > MAX_PROXY_BYTES:
+        raise ValueError("图片超过大小限制")
+    return r.content, ctype
+
+
+def api_upload(task_id, seq, ext, body):
+    from vercel_blob import put
+
+    ext = ext if ext in ("jpg", "png", "gif", "webp") else "jpg"
+    blob = put(
+        f"crawl/{task_id}/{seq}.{ext}",
+        body,
+        {"addRandomSuffix": "false", "cacheControlMaxAge": "3600"},
+    )
+    return {"url": blob["url"]}
+
+
+def api_cleanup(prefix):
+    from vercel_blob import delete, list
+
+    data = list({"prefix": prefix})
+    blobs = data.get("blobs") or []
+    urls = [b["url"] for b in blobs]
+    deleted = 0
+    if urls:
+        delete(urls)
+        deleted = len(urls)
+    return {"deleted": deleted}
+
+
+def ok_json(payload):
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    return body, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": str(len(body)),
+    }
+
+
+def err_json(status, msg):
+    body = json.dumps({"error": msg}, ensure_ascii=False).encode("utf-8")
+    return body, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": str(len(body)),
+    }, status
