@@ -9,6 +9,3 @@ dependencies = [
     "vercel-blob>=0.2",
     "curl_cffi>=0.6.0",
 ]
-
-[tool.vercel]
-entrypoint = "api.search:handler"
