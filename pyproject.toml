@@ -1,0 +1,15 @@
+[project]
+name = "wanpaweb"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "Pillow>=10.0",
+    "vercel-blob>=0.2",
+    "curl_cffi>=0.6.0",
+    "cryptography>=42.0",
+]
+
+[tool.vercel]
+entrypoint = "api.dispatcher:handler"
