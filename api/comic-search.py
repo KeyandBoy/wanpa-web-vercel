@@ -6,15 +6,14 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _auth import check_token
-from _core import err_json, ok_json
-from _novel_core import search_novel
+from _core import api_comic_search, err_json, ok_json
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         qs = parse_qs(urlparse(self.path).query)
         keyword = (qs.get("keyword") or [""])[0].strip()
-        source = (qs.get("source") or ["biquga"])[0].strip().lower() or "biquga"
+        source = (qs.get("source") or [""])[0].strip().lower()
         token = (qs.get("token") or [""])[0].strip()
         try:
             page = int((qs.get("page") or ["1"])[0] or "1")
@@ -24,14 +23,13 @@ class handler(BaseHTTPRequestHandler):
             count = int((qs.get("count") or ["20"])[0] or "20")
         except ValueError:
             count = 20
-        if not keyword:
-            body, headers, status = err_json(400, "keyword 不能为空")
-        elif source == "hhe62" and not check_token(token):
-            body, headers, status = err_json(403, "hhe62 小说为 Plus 专属功能，请先激活 Plus 版本")
+        if not keyword or not source:
+            body, headers, status = err_json(400, "keyword 和 source 不能为空")
+        elif not check_token(token):
+            body, headers, status = err_json(403, "漫画为 Plus 专属功能，请先激活 Plus 版本")
         else:
             try:
-                items, has_more = search_novel(keyword, source, page, count=count)
-                payload, headers = ok_json({"items": items, "has_more": has_more})
+                payload, headers = ok_json(api_comic_search(keyword, source, page, count))
                 status = 200
                 body = payload
             except Exception as e:

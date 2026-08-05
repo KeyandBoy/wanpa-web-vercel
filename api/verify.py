@@ -5,24 +5,24 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from _auth import verify_code
 from _core import err_json, ok_json
-from _novel_core import get_novel_chapters
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         qs = parse_qs(urlparse(self.path).query)
-        url = (qs.get("url") or [""])[0]
-        if not url:
-            body, headers, status = err_json(400, "url 不能为空")
+        code = (qs.get("code") or [""])[0].strip()
+        if not code:
+            body, headers, status = err_json(400, "激活码不能为空")
         else:
-            try:
-                chapters = get_novel_chapters(url)
-                payload, headers = ok_json({"chapters": chapters})
+            token = verify_code(code)
+            if token is None:
+                body, headers, status = err_json(404, "激活码无效，请检查后重试")
+            else:
+                payload, headers = ok_json({"ok": True, "token": token, "code": code.upper()})
                 status = 200
                 body = payload
-            except Exception as e:
-                body, headers, status = err_json(500, str(e))
         self.send_response(status)
         for k, v in headers.items():
             self.send_header(k, v)

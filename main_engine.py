@@ -885,6 +885,155 @@ def search_twitter_page(keyword, page, per_page=20):
     return items[:per_page]
 
 
+def search_pixiv_page(keyword, page, per_page=20):
+    """Pixiv 插画: cookie + AJAX 搜索（需配置 PIXIV_PHPSESSID，R18 需在设置开启）"""
+    from pixiv_svc import search_pixiv
+
+    return search_pixiv(keyword, max(page - 1, 0) + 1, per_page)
+
+
+def search_anime_pictures_page(keyword, page, per_page=20):
+    """Anime-Pictures: 日系动漫壁纸站 (SvelteKit SPA, 需 curl_cffi 模拟 Chrome 访问海外)"""
+    try:
+        from curl_cffi import requests as cr
+
+        proxies = {
+            k: v
+            for k, v in (
+                ("http", os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")),
+                ("https", os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")),
+            )
+            if v
+        }
+        r = cr.get(
+            "https://anime-pictures.net/pictures/view_posts/0",
+            params={"lang": "zh-cn", "search_tag": keyword, "page": page - 1},
+            impersonate="chrome131",
+            timeout=25,
+            proxies=proxies or None,
+        )
+        if r.status_code != 200:
+            raise ValueError(f"Anime-Pictures 返回 {r.status_code}")
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(f"Anime-Pictures 访问失败(可能需要代理): {e}") from e
+    items = []
+    seen = set()
+    # 每张图: <div class="img-block" data-pubtime> 内含 posts/{id} 链接、_bp.avif 大图、
+    # _cp.avif 缩略图与 alt="动漫图片 {W}x{H}"。按块解析保证 id/图/尺寸一一对应。
+    for blk in re.findall(
+        r'<div class="img-block[^"]*"[^>]*>(.*?)</div></div>', r.text, re.S
+    ):
+        m_bp = re.search(r'(https://opreviews\.anime-pictures\.net/\w{3}/(\w{32})_bp\.avif)', blk)
+        m_cp = re.search(r'(https://opreviews\.anime-pictures\.net/\w{3}/(\w{32})_cp\.avif)', blk)
+        m_id = re.search(r'\./posts/(\d+)', blk)
+        m_dim = re.search(r'<img alt="动漫图片 (\d+)x(\d+)"', blk)
+        url = (m_bp or m_cp).group(1)
+        if url in seen:
+            continue
+        seen.add(url)
+        items.append(
+            {
+                "url": url,
+                "title": keyword,
+                "width": int(m_dim.group(1)) if m_dim else None,
+                "height": int(m_dim.group(2)) if m_dim else None,
+                "hash": (m_bp or m_cp).group(2),
+                "post_id": m_id.group(1) if m_id else None,
+                "site": "anime-pictures",
+            }
+        )
+    return items[:per_page]
+
+
+def search_meitulu_page(keyword, page, per_page=20):
+    """meitulu.me: 美图录，关键词搜索返回图集封面图（直连）"""
+    try:
+        r = http_get(
+            "https://meitulu.me/search",
+            params={"q": keyword},
+            timeout=25,
+        )
+    except Exception as e:
+        raise ValueError(f"美图录访问失败: {e}") from e
+    items = []
+    seen = set()
+    for m in re.finditer(r'href="(/item/[^"]+)"[^>]*>\s*<img[^>]+src="(/poster/[^"]+)"', r.text):
+        ih, p = m.group(1), m.group(2)
+        if p in seen:
+            continue
+        seen.add(p)
+        items.append({"url": "https://meitulu.me" + p, "title": keyword, "width": None, "height": None, "group": ih})
+        if len(items) >= per_page:
+            break
+    return items
+
+
+_xsnvshen_cache = {}
+
+
+def _xsnvshen_sess():
+    s = requests.Session()
+    s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"})
+    try:
+        s.get("https://www.xsnvshen.co/", timeout=15)
+    except Exception:
+        pass
+    return s
+
+
+def search_xsnvshen_page(keyword, page, per_page=20):
+    """xsnvshen.co: 秀色女神，按关键词匹配图集并返回图集内所有大图（需 session cookie）"""
+    global _xsnvshen_cache
+    if keyword not in _xsnvshen_cache:
+        s = _xsnvshen_sess()
+        album_ids = []
+        for list_url in ("https://www.xsnvshen.co/album/", "https://www.xsnvshen.co/album/hd/"):
+            try:
+                r = s.get(list_url, timeout=20)
+            except Exception as e:
+                raise ValueError(f"秀色女神访问失败: {e}") from e
+            for m in re.finditer(
+                r'<a[^>]+href="(/album/\d+)"[^>]+class="itemimg"[^>]*title="([^"]*)"[^>]*>',
+                r.text,
+                re.S,
+            ):
+                href, title = m.group(1), m.group(2)
+                if keyword in title:
+                    album_ids.append(href)
+        album_ids = album_ids[:8]
+        all_imgs = []
+        for ap in album_ids:
+            try:
+                ar = s.get("https://www.xsnvshen.co" + ap, timeout=20)
+            except Exception:
+                continue
+            seen_local = set()
+            for mm in re.finditer(r"data-original=['\"](//?img\.xsnvshen\.co/album/[^'\"]+)['\"]", ar.text):
+                u = mm.group(1)
+                if "/thumb_" in u:
+                    continue
+                if u.startswith("//"):
+                    u = "https:" + u
+                if u in seen_local:
+                    continue
+                seen_local.add(u)
+                all_imgs.append((ap, u))
+        _xsnvshen_cache[keyword] = _interleave(all_imgs)
+    pairs = _xsnvshen_cache[keyword]
+    start = max(page - 1, 0) * per_page
+    slice_ = pairs[start : start + per_page]
+    return [{"url": u, "title": keyword, "width": None, "height": None, "group": ap} for ap, u in slice_]
+
+
+def search_maccms_pic_page(keyword, page, per_page=20, count=None):
+    """hhe62 美图源：关键词匹配分类列表标题，取图集全部图片交错返回"""
+    from maccms_svc import search_pic
+
+    return search_pic(keyword, page, per_page, count=count)
+
+
 def fetch_page_images(url):
     """抓取任意网页, 提取页面内的图片链接"""
     if not url.startswith(("http://", "https://")):

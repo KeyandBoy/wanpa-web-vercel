@@ -2,17 +2,25 @@
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { isLocal } from '../api'
-import { SOURCE_GROUPS, sourceMap, SIMPLE_GROUPS, NOVEL_SOURCES, SIMPLE_NOVEL_GROUPS } from '../sources'
+import {
+  SOURCE_GROUPS, sourceMap, SIMPLE_GROUPS, NOVEL_SOURCES, SIMPLE_NOVEL_GROUPS,
+  COMIC_GROUPS, COMIC_SOURCES, SIMPLE_COMIC_GROUPS, PLUS_SOURCES, LITE_SOURCES
+} from '../sources'
 import {
   canPickFolder,
   createBlobSink,
   createFolderSink,
   createMemorySink,
   downloadZip,
+  passLayers,
   runCrawl,
   sanitizeName
 } from '../crawl'
+import MultiLayerFilter from './MultiLayerFilter.vue'
 import { api } from '../api'
+import { license } from '../license'
+
+const isPlus = computed(() => license.version === 'plus')
 
 const form = reactive({
   keyword: '',
@@ -23,17 +31,31 @@ const form = reactive({
   minHeight: 0,
   workers: 4,
   noWatermark: false,
-  aiFilter: false
+  layers: []
 })
 
 const mode = ref('image')
 const viewMode = ref('detail')
 const leftWidth = ref(420)
+const cform = reactive({
+  keyword: '',
+  sources: ['wnacg'],
+  count: 20,
+  preview: 60,
+  layers: []
+})
+const cResults = ref([])
+const cSearching = ref(false)
+const cPreview = ref(null)
+const cPreviewLoading = ref(false)
+const cPreviewImages = ref([])
+const cWhole = reactive({ running: false, done: 0, total: 0 })
+const cWholeController = ref(null)
 const nform = reactive({
   keyword: '',
   sources: ['aaanovel'],
   count: 20,
-  aiFilter: false
+  layers: []
 })
 const nResults = ref([])
 const nSearching = ref(false)
@@ -85,6 +107,140 @@ function pushNovelLog(msg) {
   if (novelLogs.value.length > 200) novelLogs.value.splice(0, novelLogs.value.length - 200)
 }
 
+const comicLogs = ref([])
+function pushComicLog(msg) {
+  comicLogs.value.push(`[${new Date().toLocaleTimeString()}] ${msg}`)
+  if (comicLogs.value.length > 200) comicLogs.value.splice(0, comicLogs.value.length - 200)
+}
+
+async function cSearch() {
+  if (cSearching.value) return
+  if (!cform.keyword.trim()) {
+    ElMessage.warning('请输入关键词')
+    return
+  }
+  if (!cform.sources.length) {
+    ElMessage.warning('请至少选择一个漫画源')
+    return
+  }
+  cSearching.value = true
+  cResults.value = []
+  cPreview.value = null
+  cPreviewImages.value = []
+  try {
+    const results = await Promise.all(
+      cform.sources.map(async (src) => {
+        try {
+          const r = await api.comicSearch({ keyword: cform.keyword.trim(), source: src, count: cform.count })
+          return r.items || []
+        } catch (e) {
+          pushComicLog(`${src} 搜索失败，已跳过: ${e.message}`)
+          return []
+        }
+      })
+    )
+    const seen = new Set()
+    cResults.value = results.flat().filter((it) => {
+      if (seen.has(it.url)) return false
+      seen.add(it.url)
+      return true
+    })
+    if (cform.layers.length && cResults.value.length) {
+      const before = cResults.value.length
+      cResults.value = cResults.value.filter((it) => passLayers(it, cform.layers))
+      pushComicLog(`多层筛选: ${before} → ${cResults.value.length} 本`)
+    }
+    pushComicLog(`漫画搜索: 共 ${cResults.value.length} 部`)
+    if (!cResults.value.length) ElMessage.warning('没有搜索到漫画')
+  } catch (e) {
+    ElMessage.error(`搜索失败: ${e.message}`)
+  } finally {
+    cSearching.value = false
+  }
+}
+
+function cClearResults() {
+  cResults.value = []
+  cPreview.value = null
+  cPreviewImages.value = []
+}
+
+async function cPreviewComic(item) {
+  if (cPreviewLoading.value) return
+  cPreviewLoading.value = true
+  cPreview.value = item
+  cPreviewImages.value = []
+  try {
+    pushComicLog(`预览: ${(item.title || '').slice(0, 40)}...`)
+    const r = await api.comicPages(item.url, cform.preview)
+    cPreview.value.title = r.title || item.title
+    cPreviewImages.value = r.images || []
+    pushComicLog(`预览获取 ${cPreviewImages.value.length} 张图片`)
+    if (!cPreviewImages.value.length) ElMessage.warning('未获取到图片')
+  } catch (e) {
+    ElMessage.error(`预览失败: ${e.message}`)
+  } finally {
+    cPreviewLoading.value = false
+  }
+}
+
+async function cDownloadWhole(item) {
+  if (cWhole.running) return
+  cWhole.running = true
+  cWhole.done = 0
+  cWhole.total = 0
+  cWholeController.value = new AbortController()
+  const files = []
+  try {
+    pushComicLog(`开始下载: ${(item.title || '').slice(0, 40)}...`)
+    const r = await api.comicPages(item.url)
+    const imgs = r.images || []
+    if (!imgs.length) throw new Error('未获取到图片')
+    cWhole.total = imgs.length
+    const title = sanitizeName(r.title || item.title || 'comic')
+    const workers = 6
+    let idx = 0
+    let fail = 0
+    const run = async () => {
+      while (idx < imgs.length) {
+        const i = idx++
+        if (cWholeController.value?.signal.aborted) return
+        try {
+          const blob = await fetch(api.proxyUrl(imgs[i])).then((x) => {
+            if (!x.ok) throw new Error('HTTP ' + x.status)
+            return x.blob()
+          })
+          const ext = (imgs[i].split('?')[0].match(/\.(jpe?g|png|gif|webp)$/i) || [])[1] || 'jpg'
+          files.push({ path: `${title}/${String(i + 1).padStart(3, '0')}.${ext}`, blob })
+        } catch (e) {
+          fail += 1
+        }
+        cWhole.done++
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(workers, imgs.length) }, run))
+    if (!files.length) throw new Error('所有图片下载失败')
+    pushComicLog(`开始打包 ZIP: ${title} (${files.length} 张${fail ? `, ${fail} 张失败` : ''})`)
+    await downloadZip(files, `${title}.zip`)
+    pushComicLog(`漫画下载完成: ${title} (${files.length} 张${fail ? `, ${fail} 张失败` : ''})`)
+    ElMessage.success('ZIP 打包已开始下载')
+  } catch (e) {
+    if (e.name !== 'AbortError') ElMessage.error(`漫画下载失败: ${e.message}`)
+  } finally {
+    cWhole.running = false
+    cWhole.total = 0
+    cWhole.done = 0
+    cWholeController.value = null
+  }
+}
+
+function cCancelWhole() {
+  if (cWholeController.value) {
+    cWholeController.value.abort()
+    pushComicLog('已请求停止...')
+  }
+}
+
 function resetState() {
   running.value = false
   done.value = false
@@ -105,6 +261,11 @@ async function start() {
   }
   if (!form.sites.length) {
     ElMessage.warning('请至少选择一个数据源')
+    return
+  }
+  const blocked = form.sites.filter((s) => isSourcePlus(s))
+  if (!isPlus.value && blocked.length) {
+    ElMessage.warning('所选数据源包含 Plus 专属功能，请先开通 Plus')
     return
   }
   resetState()
@@ -147,7 +308,7 @@ async function start() {
       noWatermark: form.noWatermark,
       workers: form.workers,
       customUrls: form.customUrls,
-      aiFilter: form.aiFilter,
+      layers: form.layers,
       sink: s,
       signal: controller.value.signal,
       onProgress: (p) => {
@@ -251,6 +412,34 @@ function toggleGroup(g, sites, setSites) {
   }
 }
 
+// ---- 版本分流 ----
+function visibleImageGroups() {
+  return SOURCE_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((s) => isPlus.value || s.tier === 'lite'),
+  })).filter((g) => g.items.length)
+}
+function visibleSimpleGroups() {
+  return SIMPLE_GROUPS.filter((g) => isPlus.value || g.tier === 'lite')
+}
+function visibleNovelSources() {
+  return NOVEL_SOURCES.filter((s) => isPlus.value || s.tier === 'lite')
+}
+function visibleSimpleNovelGroups() {
+  return SIMPLE_NOVEL_GROUPS.filter((g) => isPlus.value || g.tier === 'lite')
+}
+function isSourcePlus(id) {
+  return PLUS_SOURCES.has(id)
+}
+function ensurePlusAccess(source) {
+  if (isPlus.value) return true
+  if (isSourcePlus(source)) {
+    ElMessage.warning('该功能为 Plus 专属，请点击右上角「Lite」开通')
+    return false
+  }
+  return true
+}
+
 function startLeftDrag(e) {
   e.preventDefault()
   const startX = e.clientX
@@ -278,6 +467,10 @@ async function nSearch() {
     ElMessage.warning('请至少选择一个小说源')
     return
   }
+  if (!isPlus.value && nform.sources.some((s) => isSourcePlus(s))) {
+    ElMessage.warning('所选小说源为 Plus 专属，请先开通 Plus')
+    return
+  }
   nSearching.value = true
   nResults.value = []
   nReading.value = null
@@ -300,21 +493,10 @@ async function nSearch() {
       seen.add(it.url)
       return true
     })
-    if (nform.aiFilter && nResults.value.length) {
-      pushNovelLog('AI 筛选相关小说...')
-      try {
-        const payload = nResults.value.map((it, i) => ({
-          id: i,
-          title: it.title || it.url,
-          extra: it.source || '',
-        }))
-        const r = await api.dsFilter(nform.keyword.trim(), payload)
-        const kept = new Set((r.kept || []).map((k) => k.id))
-        nResults.value = nResults.value.filter((_, i) => kept.has(i))
-        pushNovelLog(`AI 筛选后保留 ${nResults.value.length} 篇`)
-      } catch (e) {
-        pushNovelLog('AI 筛选失败已跳过（保持原结果）')
-      }
+    if (nform.layers.length && nResults.value.length) {
+      const before = nResults.value.length
+      nResults.value = nResults.value.filter((it) => passLayers(it, nform.layers))
+      pushNovelLog(`多层筛选: ${before} → ${nResults.value.length} 篇`)
     }
     pushNovelLog(`小说搜索: 共 ${nResults.value.length} 篇`)
     if (!nResults.value.length) ElMessage.warning('没有搜索到小说')
@@ -505,14 +687,6 @@ async function nStartDownload() {
         const r = await api.novelContent(it.url, translate)
         if (!r.content) throw new Error('正文为空')
         let content = r.content
-        if (nform.aiFilter) {
-          try {
-            const c = await api.dsClean(content.slice(0, 12000))
-            if (c.text && c.text.trim()) content = c.text
-          } catch (e) {
-            pushNovelLog(`[${i + 1}/${targets.length}] AI 清理失败已跳过: ${e.message}`)
-          }
-        }
         const title = sanitizeName(it.title)
         const path = `${nform.keyword.trim() || 'novel'}/小说/${it.source}/${title}.txt`
         const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
@@ -535,6 +709,7 @@ async function nStartDownload() {
 
 onBeforeUnmount(() => {
   controller.value?.abort()
+  cWholeController.value?.abort()
 })
 </script>
 
@@ -553,6 +728,7 @@ onBeforeUnmount(() => {
               <el-radio-group v-model="mode" size="small">
                 <el-radio-button value="image">图片</el-radio-button>
                 <el-radio-button value="novel">小说</el-radio-button>
+                <el-radio-button value="comic">漫画</el-radio-button>
               </el-radio-group>
             </span>
           </div>
@@ -562,15 +738,19 @@ onBeforeUnmount(() => {
           <el-form-item label="关键词">
             <el-input v-model="form.keyword" clearable />
           </el-form-item>
+          <el-form-item label="多层筛选">
+            <MultiLayerFilter v-model="form.layers" />
+          </el-form-item>
           <el-form-item label="数据源">
             <div v-if="viewMode === 'simple'" class="simple-groups">
-              <div v-for="g in SIMPLE_GROUPS" :key="g.id" class="simple-group">
+              <div v-for="g in visibleSimpleGroups()" :key="g.id" class="simple-group">
                 <el-tooltip :open-delay="800" placement="top" effect="light">
                   <template #content>
                     <div class="tip">
                       <div class="tip-title">
                         {{ g.label }}
                         <el-tag size="small" :type="g.adult ? 'danger' : 'info'" effect="plain">{{ g.tag }}</el-tag>
+                        <el-tag v-if="g.tier === 'plus'" size="small" type="warning" effect="plain">Plus</el-tag>
                       </div>
                       <div class="tip-desc">{{ g.desc }}</div>
                     </div>
@@ -586,7 +766,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div v-else class="source-groups">
-              <div v-for="group in SOURCE_GROUPS" :key="group.name" class="source-group">
+              <div v-for="group in visibleImageGroups()" :key="group.name" class="source-group">
                 <div class="group-name">{{ group.name }}</div>
                 <el-checkbox-group v-model="form.sites" class="group-checks">
                   <span v-for="s in group.items" :key="s.id" class="src-item">
@@ -598,6 +778,7 @@ onBeforeUnmount(() => {
                             <el-tag size="small" :type="s.adult ? 'danger' : 'info'" effect="plain">
                               {{ s.tag }}
                             </el-tag>
+                            <el-tag v-if="s.tier === 'plus'" size="small" type="warning" effect="plain">Plus</el-tag>
                           </div>
                           <div class="tip-desc">{{ s.desc }}</div>
                         </div>
@@ -634,20 +815,19 @@ onBeforeUnmount(() => {
             <el-switch v-model="form.noWatermark" />
             <span class="hint">关闭疑似水印 URL 过滤</span>
           </el-form-item>
-          <el-form-item label="AI筛选">
-            <el-switch v-model="form.aiFilter" />
-            <span class="hint">DeepSeek 按关键词过滤不相关结果（需配置 DEEPSEEK_KEY）</span>
-          </el-form-item>
         </el-form>
 
         <el-form v-if="mode === 'novel'" label-width="80px" label-position="left">
           <el-form-item label="关键词">
             <el-input v-model="nform.keyword" clearable />
           </el-form-item>
+          <el-form-item label="多层筛选">
+            <MultiLayerFilter v-model="nform.layers" />
+          </el-form-item>
           <el-form-item label="数据源">
             <div class="source-groups">
               <div v-if="viewMode === 'simple'" class="simple-groups">
-                <div v-for="g in SIMPLE_NOVEL_GROUPS" :key="g.id" class="simple-group">
+                <div v-for="g in visibleSimpleNovelGroups()" :key="g.id" class="simple-group">
                   <el-tooltip :open-delay="800" placement="top" effect="light">
                     <template #content>
                       <div class="tip">
@@ -669,7 +849,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <el-checkbox-group v-else v-model="nform.sources" class="group-checks">
-                <span v-for="s in NOVEL_SOURCES" :key="s.id" class="src-item">
+                <span v-for="s in visibleNovelSources()" :key="s.id" class="src-item">
                   <el-tooltip :open-delay="800" placement="top" effect="light">
                     <template #content>
                       <div class="tip">
@@ -688,10 +868,6 @@ onBeforeUnmount(() => {
           </el-form-item>
           <el-form-item label="数量">
             <el-slider v-model="nform.count" :min="1" :max="200" show-input />
-          </el-form-item>
-          <el-form-item label="AI筛选">
-            <el-switch v-model="nform.aiFilter" />
-            <span class="hint">按关键词过滤 + 清理正文垃圾（需配置 DEEPSEEK_KEY）</span>
           </el-form-item>
           <div class="actions">
             <el-button type="primary" :loading="nSearching" @click="nSearch">搜索</el-button>
@@ -729,6 +905,91 @@ onBeforeUnmount(() => {
           </div>
         </el-form>
 
+        <el-form v-if="mode === 'comic'" label-width="80px" label-position="left">
+          <el-form-item label="关键词">
+            <el-input v-model="cform.keyword" clearable />
+          </el-form-item>
+          <el-form-item label="多层筛选">
+            <MultiLayerFilter v-model="cform.layers" />
+          </el-form-item>
+          <el-form-item label="数据源">
+            <div class="source-groups">
+              <div v-if="viewMode === 'simple'" class="simple-groups">
+                <div v-for="g in SIMPLE_COMIC_GROUPS" :key="g.id" class="simple-group">
+                  <el-tooltip :open-delay="800" placement="top" effect="light">
+                    <template #content>
+                      <div class="tip">
+                        <div class="tip-title">
+                          {{ g.label }}
+                          <el-tag size="small" type="warning" effect="plain">Plus</el-tag>
+                        </div>
+                        <div class="tip-desc">{{ g.desc }}</div>
+                      </div>
+                    </template>
+                    <el-checkbox
+                      :model-value="groupChecked(g, cform.sources)"
+                      :indeterminate="groupIndeterminate(g, cform.sources)"
+                      @change="toggleGroup(g, cform.sources, (v) => (cform.sources = v))"
+                    >
+                      {{ g.label }}（{{ g.sources.length }}个站）
+                    </el-checkbox>
+                  </el-tooltip>
+                </div>
+              </div>
+              <div v-else class="source-groups">
+                <div v-for="group in COMIC_GROUPS" :key="group.name" class="source-group">
+                  <div class="group-name">{{ group.name }}</div>
+                  <el-checkbox-group v-model="cform.sources" class="group-checks">
+                    <span v-for="s in group.items" :key="s.id" class="src-item">
+                      <el-tooltip :open-delay="800" placement="top" effect="light">
+                        <template #content>
+                          <div class="tip">
+                            <div class="tip-title">
+                              {{ s.label }}
+                              <el-tag size="small" type="warning" effect="plain">Plus</el-tag>
+                            </div>
+                            <div class="tip-desc">{{ s.desc }}</div>
+                          </div>
+                        </template>
+                        <el-checkbox :value="s.id">{{ s.label }}</el-checkbox>
+                      </el-tooltip>
+                    </span>
+                  </el-checkbox-group>
+                </div>
+              </div>
+            </div>
+          </el-form-item>
+          <el-form-item label="数量">
+            <el-slider v-model="cform.count" :min="1" :max="200" show-input />
+          </el-form-item>
+          <el-form-item label="预览张数">
+            <el-input-number v-model="cform.preview" :min="10" :max="200" controls-position="right" />
+          </el-form-item>
+          <div class="actions">
+            <el-button type="primary" :loading="cSearching" @click="cSearch">搜索</el-button>
+          </div>
+          <div v-if="cResults.length" class="novel-res">
+            <div class="novel-res-head">
+              <span>候选 {{ cResults.length }} 部（点击预览，右侧可整本下载）</span>
+              <el-button size="small" link @click="cClearResults">清空</el-button>
+            </div>
+            <div class="novel-res-list">
+              <div
+                v-for="it in cResults"
+                :key="it.url"
+                class="novel-res-item comic-res-item"
+                :class="{ active: cPreview && cPreview.url === it.url }"
+                @click="cPreviewComic(it)"
+              >
+                <img v-if="it.cover" class="comic-cover" :src="it.cover" alt="" loading="lazy" />
+                <span class="novel-res-title" :title="it.title">{{ it.title }}</span>
+                <el-tag size="small" type="info" effect="plain">{{ it.source }}</el-tag>
+                <el-tag v-if="it.is_cn" size="small" type="success" effect="plain">汉化</el-tag>
+              </div>
+            </div>
+          </div>
+        </el-form>
+
         <div class="actions">
           <el-button
             v-if="mode === 'image'"
@@ -742,7 +1003,7 @@ onBeforeUnmount(() => {
           </el-button>
           <el-button v-if="running && mode === 'image'" size="large" @click="cancel">停止</el-button>
         </div>
-        <el-alert class="banner" :title="banner" type="info" :closable="false" />
+        <el-alert v-if="mode === 'image'" class="banner" :title="banner" type="info" :closable="false" />
       </el-card>
       <div class="left-handle" title="拖动调整宽度" @mousedown="startLeftDrag">
         <span class="handle-grip"></span>
@@ -820,6 +1081,54 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <el-empty v-else description="点击左侧小说开始阅读" :image-size="60" />
+      </el-card>
+
+      <el-card v-if="mode === 'comic'" shadow="never">
+        <template #header>
+          漫画下载
+          <span v-if="cWhole.total" class="dim">({{ cWhole.done }} / {{ cWhole.total }})</span>
+        </template>
+        <el-progress
+          v-if="cWhole.total"
+          :percentage="Math.round((cWhole.done / cWhole.total) * 100)"
+          :stroke-width="18"
+        >
+          <span class="progress-text">{{ cWhole.done }} / {{ cWhole.total }} 张</span>
+        </el-progress>
+        <div v-if="cPreview && !cWhole.running" class="comic-dl-bar">
+          <el-button type="success" @click="cDownloadWhole(cPreview)">整本打包 ZIP 下载</el-button>
+          <span class="dim">将整本漫画打包为 ZIP 下载（多页将逐张拉取）</span>
+        </div>
+        <el-button v-if="cWhole.running" @click="cCancelWhole">停止</el-button>
+        <el-empty v-if="!comicLogs.length" description="还没有漫画日志" :image-size="60" />
+        <div v-else class="logs nlogs">
+          <div v-for="(l, i) in comicLogs" :key="i" class="log-line">{{ l }}</div>
+        </div>
+      </el-card>
+
+      <el-card v-if="mode === 'comic'" shadow="never" class="player-card">
+        <template #header>
+          漫画预览
+          <span v-if="cPreview" class="dim">{{ cPreview.title }}</span>
+          <el-button v-if="cPreview" class="comic-preview-close" size="small" link @click="cPreview = null">
+            关闭
+          </el-button>
+        </template>
+        <div v-if="cPreviewLoading" class="preview-loading">加载预览中...</div>
+        <template v-else-if="cPreviewImages.length">
+          <div class="comic-wall">
+            <el-image
+              v-for="(u, i) in cPreviewImages"
+              :key="u"
+              class="comic-wall-item"
+              :src="api.proxyUrl(u)"
+              :preview-src-list="cPreviewImages.map((x) => api.proxyUrl(x))"
+              :initial-index="i"
+              fit="cover"
+            />
+          </div>
+        </template>
+        <el-empty v-else description="点击左侧漫画预览" :image-size="60" />
       </el-card>
 
       <el-card shadow="never" v-if="images.length">
@@ -926,6 +1235,12 @@ onBeforeUnmount(() => {
 }
 .comic-res-item {
   gap: 8px;
+}
+.comic-dl-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 .comic-cover {
   width: 34px;

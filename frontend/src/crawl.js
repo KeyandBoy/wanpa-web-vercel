@@ -31,6 +31,28 @@ function passFilter(item, { minWidth, minHeight, noWatermark }) {
   return true
 }
 
+export function passLayers(item, rules) {
+  if (!rules || !rules.length) return true
+  for (const rule of rules) {
+    const words = (rule.words || '')
+      .split(/[,，、\s]+/)
+      .map((w) => w.trim().toLowerCase())
+      .filter(Boolean)
+    if (!words.length) continue
+    const hay = (
+      rule.field === 'title'
+        ? item.title || ''
+        : rule.field === 'url'
+          ? item.url || ''
+          : `${item.title || ''} ${item.url || ''}`
+    ).toLowerCase()
+    const hit = words.some((w) => hay.includes(w))
+    if (rule.mode === 'exclude' && hit) return false
+    if (rule.mode === 'include' && !hit) return false
+  }
+  return true
+}
+
 async function fetchImage(url, signal) {
   const res = await fetch(api.proxyUrl(url), { signal })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -98,7 +120,7 @@ export async function runCrawl({
   noWatermark = false,
   workers = 4,
   customUrls = '',
-  aiFilter = false,
+  layers = [],
   sink,
   onProgress,
   onLog,
@@ -152,20 +174,17 @@ export async function runCrawl({
           onLog
         )
       }
-      if (aiFilter && items.length) {
-        onLog?.(`${source}: AI 筛选相关结果...`)
-        try {
-          const payload = items.map((it, i) => ({
-            id: i,
-            title: it.title || it.url,
-            extra: it.width && it.height ? `${it.width}x${it.height}` : '',
-          }))
-          const r = await api.dsFilter(keyword, payload)
-          const kept = new Set((r.kept || []).map((k) => k.id))
-          items = items.filter((_, i) => kept.has(i))
-          onLog?.(`${source}: AI 筛选后保留 ${items.length} 条`)
-        } catch (e) {
-          onLog?.(`${source}: AI 筛选失败已跳过（保持原结果）`)
+      if (layers.length) {
+        const before = items.length
+        items = items.filter((it) => passLayers(it, layers))
+        if (items.length !== before) {
+          onLog?.(`${source}: 多层筛选 ${before} → ${items.length} 条`)
+        }
+        if (!items.length) {
+          onLog?.(`${source}: 筛选后无匹配结果，跳过该源`)
+          skipped += 1
+          emit()
+          continue
         }
       }
       const beforeBalance = items.length

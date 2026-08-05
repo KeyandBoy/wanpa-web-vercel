@@ -51,8 +51,8 @@ def needs_translate(text):
 
 def _one(text, target):
     with _lock:
-        if text in _cache:
-            return _cache[text]
+        if (text, target) in _cache:
+            return _cache[(text, target)]
     out = text
     for attempt in range(3):
         try:
@@ -77,12 +77,14 @@ def _one(text, target):
         except Exception:
             time.sleep(0.4 * (attempt + 1))
     with _lock:
-        _cache[text] = out
+        _cache[(text, target)] = out
     return out
 
 
-def to_zh(text):
-    if not text or not needs_translate(text):
+def to_zh(text, force=False):
+    if not text:
+        return text
+    if not force and not needs_translate(text):
         return text
     return _one(text, "zh-CN")
 
@@ -93,14 +95,32 @@ def to_en(text):
     return _one(text, "en")
 
 
-def translate_many(texts):
-    """并发翻译一批标题(只翻需要翻的)，返回 {原文本: 翻译后}"""
+def _to_lang(text, lang):
+    if not text or not has_chinese(text):
+        return text
+    return _one(text, lang)
+
+
+def to_ko(text):
+    return _to_lang(text, "ko")
+
+
+def to_ja(text):
+    return _to_lang(text, "ja")
+
+
+def to_zh_hant(text):
+    return _to_lang(text, "zh-TW")
+
+
+def translate_many(texts, force=False):
+    """并发翻译一批标题(只翻需要翻的)，返回 {原文本: 翻译后}；force=True 时强制全部翻译（用于日文源）"""
     texts = list(texts)
-    todo = [t for t in texts if t and needs_translate(t)]
+    todo = texts if force else [t for t in texts if t and needs_translate(t)]
     with ThreadPoolExecutor(max_workers=3) as ex:
         list(ex.map(lambda t: _one(t, "zh-CN"), todo))
     out = {}
     with _lock:
         for t in texts:
-            out[t] = _cache.get(t, t)
+            out[t] = _cache.get((t, "zh-CN"), t)
     return out

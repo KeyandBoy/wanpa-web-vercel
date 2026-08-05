@@ -13,6 +13,7 @@ from main_engine import (
     fetch_page_images,
     http_get,
     pixabay_page,
+    search_anime_pictures_page,
     search_baidu_page,
     search_bing_page,
     search_duitang_page,
@@ -20,8 +21,11 @@ from main_engine import (
     search_giphy_page,
     search_google_page,
     search_huaban_page,
+    search_maccms_pic_page,
+    search_meitulu_page,
     search_openverse_page,
     search_pexels_page,
+    search_pixiv_page,
     search_pxhere_page,
     search_so360_page,
     search_sogou_page,
@@ -32,6 +36,7 @@ from main_engine import (
     search_wallhere_page,
     search_wikimedia_page,
     search_xiurenai_page,
+    search_xsnvshen_page,
     search_yahoo_page,
     search_yande_page,
     search_youtube_page,
@@ -45,11 +50,11 @@ BLOCKED_HOSTS = re.compile(
 )
 
 
-def api_search(keyword, source, page):
+def api_search(keyword, source, page, count=20):
     source = source.lower()
     EN_SOURCES = {
         "foamgirl", "openverse", "wikimedia", "wallhaven", "wallhere", "yande",
-        "pxhere", "pixabay", "unsplash", "giphy",
+        "pxhere", "pixabay", "unsplash", "giphy", "anime-pictures", "pixiv",
     }
     if source in EN_SOURCES:
         try:
@@ -131,6 +136,20 @@ def api_search(keyword, source, page):
     elif source == "yande":
         items = search_yande_page(keyword, page)
         has_more = bool(items)
+    elif source == "pixiv":
+        items = search_pixiv_page(keyword, page)
+        has_more = bool(items)
+    elif source == "anime-pictures":
+        items = search_anime_pictures_page(keyword, page)
+        has_more = bool(items)
+    elif source == "meitulu":
+        items = search_meitulu_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "xsnvshen":
+        items = search_xsnvshen_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "hhe62":
+        items, has_more = search_maccms_pic_page(keyword, max(page - 1, 0), count=count)
     else:
         raise ValueError("不支持的数据源: " + source)
     if source == "foamgirl":
@@ -152,6 +171,19 @@ def api_search(keyword, source, page):
 def api_page_images(url):
     items = fetch_page_images(url)
     return {"items": items, "has_more": False}
+
+
+def api_comic_search(keyword, source, page=1, count=20):
+    from comic_svc import search_comic
+
+    items, has_more = search_comic(keyword, source, page, count=count)
+    return {"items": items, "has_more": has_more}
+
+
+def api_comic_pages(url, limit=None):
+    from comic_svc import comic_pages
+
+    return comic_pages(url, limit)
 
 
 def api_proxy(url):

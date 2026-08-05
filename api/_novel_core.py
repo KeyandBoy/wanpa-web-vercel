@@ -158,3 +158,32 @@ def _clean(text):
     out = "\n".join(lines)
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
     return out
+
+
+# ============================== 多源分发 ==============================
+def search_novel(keyword, source, page=1, per_page=20, count=None):
+    """小说搜索分发：biquga=笔趣阁 / hhe62=hhe62成人小说"""
+    source = (source or "").lower()
+    if source == "hhe62":
+        from maccms_svc import search_novel as _h62_search
+
+        items, has_more = _h62_search(keyword, page, per_page, count=count)
+        return items, has_more
+    items, has_more = search_biquga(keyword, page, per_page)
+    return items, has_more
+
+
+def get_novel_content(url, translate=False):
+    """正文获取分发：按 URL 判定数据源"""
+    if "hhe62" in url or "zfxdrshm.top" in url:
+        from maccms_svc import get_novel_content as _h62_content
+
+        return _h62_content(url, translate)
+    return get_biquga_content(url)
+
+
+def get_novel_chapters(url):
+    """章节目录分发：仅支持章节式站点；hhe62 为单页正文，返回空"""
+    if "hhe62" in url or "zfxdrshm.top" in url:
+        return []
+    return get_biquga_chapters(url)

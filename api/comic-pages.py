@@ -6,25 +6,27 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _auth import check_token
-from _core import err_json, ok_json
-from _novel_core import get_novel_content
+from _core import api_comic_pages, err_json, ok_json
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         qs = parse_qs(urlparse(self.path).query)
         url = (qs.get("url") or [""])[0]
-        translate = (qs.get("translate") or ["0"])[0] in ("1", "true", "yes")
         token = (qs.get("token") or [""])[0].strip()
-        is_plus = ("hhe62" in url) or ("zfxdrshm.top" in url)
+        limit = None
+        if qs.get("limit"):
+            try:
+                limit = max(1, min(int(qs["limit"][0]), 200))
+            except ValueError:
+                limit = None
         if not url:
             body, headers, status = err_json(400, "url 不能为空")
-        elif is_plus and not check_token(token):
-            body, headers, status = err_json(403, "hhe62 小说为 Plus 专属功能，请先激活 Plus 版本")
+        elif not check_token(token):
+            body, headers, status = err_json(403, "漫画为 Plus 专属功能，请先激活 Plus 版本")
         else:
             try:
-                content = get_novel_content(url, translate)
-                payload, headers = ok_json({"content": content})
+                payload, headers = ok_json(api_comic_pages(url, limit))
                 status = 200
                 body = payload
             except Exception as e:

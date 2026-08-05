@@ -1,11 +1,19 @@
+import { currentToken } from './license'
+
 const qs = (p) => new URLSearchParams(p).toString()
 
 export const isLocal = () =>
   ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname)
 
+// 附加激活 token（Plus 源请求需要）
+const tok = () => {
+  const t = currentToken()
+  return t ? { token: t } : {}
+}
+
 export const api = {
   search: (params) =>
-    fetch(`/api/search?${qs(params)}`).then(async (r) => {
+    fetch(`/api/search?${qs({ ...params, ...tok() })}`).then(async (r) => {
       if (!r.ok) throw new Error((await r.json()).error || '搜索失败')
       return r.json()
     }),
@@ -32,10 +40,32 @@ export const api = {
       if (!r.ok) throw new Error((await r.json()).error || '清理失败')
       return r.json()
     }),
+  comicSearch: (params) => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 90000)
+    return fetch(`/api/comic-search?${qs({ ...params, ...tok() })}`, { signal: ctrl.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).error || '漫画搜索失败')
+        return r.json()
+      })
+      .finally(() => clearTimeout(timer))
+  },
+  comicPages: (url, limit) => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 90000)
+    const p = { url, ...tok() }
+    if (limit) p.limit = limit
+    return fetch(`/api/comic-pages?${qs(p)}`, { signal: ctrl.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).error || '漫画内容获取失败')
+        return r.json()
+      })
+      .finally(() => clearTimeout(timer))
+  },
   novelSearch: (params) => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 60000)
-    return fetch(`/api/novel-search?${qs(params)}`, { signal: ctrl.signal })
+    return fetch(`/api/novel-search?${qs({ ...params, ...tok() })}`, { signal: ctrl.signal })
       .then(async (r) => {
         if (!r.ok) throw new Error((await r.json()).error || '小说搜索失败')
         return r.json()
@@ -45,9 +75,10 @@ export const api = {
   novelContent: (url, translate) => {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 60000)
-    return fetch(`/api/novel-content?url=${encodeURIComponent(url)}&translate=${translate ? 1 : 0}`, {
-      signal: ctrl.signal,
-    })
+    return fetch(
+      `/api/novel-content?url=${encodeURIComponent(url)}&translate=${translate ? 1 : 0}&${qs(tok())}`,
+      { signal: ctrl.signal }
+    )
       .then(async (r) => {
         if (!r.ok) throw new Error((await r.json()).error || '内容获取失败')
         return r.json()
@@ -55,7 +86,7 @@ export const api = {
       .finally(() => clearTimeout(timer))
   },
   novelChapters: (url) =>
-    fetch(`/api/novel-chapters?url=${encodeURIComponent(url)}`).then(async (r) => {
+    fetch(`/api/novel-chapters?url=${encodeURIComponent(url)}&${qs(tok())}`).then(async (r) => {
       if (!r.ok) throw new Error((await r.json()).error || '目录获取失败')
       return r.json()
     }),
@@ -68,34 +99,22 @@ export const api = {
       if (!r.ok) throw new Error((await r.json()).error || '摘要生成失败')
       return r.json()
     }),
-  dsFilter: (keyword, items) => {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 40000)
-    return fetch('/api/ds-filter', {
+  verify: (code) =>
+    fetch(`/api/verify?code=${encodeURIComponent(code)}`).then(async (r) => {
+      if (!r.ok) throw new Error((await r.json()).error || '激活失败')
+      return r.json()
+    }),
+  issueCode: (adminKey, count = 1) =>
+    fetch('/api/issue-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword, items }),
-      signal: ctrl.signal,
-    })
-      .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json()).error || '筛选失败')
-        return r.json()
-      })
-      .finally(() => clearTimeout(timer))
-  },
-  dsClean: (text) => {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 40000)
-    return fetch('/api/ds-clean', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-      signal: ctrl.signal,
-    })
-      .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json()).error || '清理失败')
-        return r.json()
-      })
-      .finally(() => clearTimeout(timer))
-  },
+      body: JSON.stringify({ admin_key: adminKey, count }),
+    }).then(async (r) => {
+      if (!r.ok) throw new Error((await r.json()).error || '发码失败')
+      return r.json()
+    }),
+  // ---- RuoYi 账号系统占位（后续接入时实现）----
+  login: async (_email, _pwd) => ({ ok: false, error: 'RuoYi 接入待开放' }),
+  logout: async () => ({ ok: true }),
+  getUserInfo: async () => null,
 }
