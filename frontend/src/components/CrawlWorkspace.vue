@@ -115,6 +115,10 @@ function pushComicLog(msg) {
 
 async function cSearch() {
   if (cSearching.value) return
+  if (!isPlus.value) {
+    ElMessage.warning('漫画板块为 Plus 专属，请点击右上角「Lite」开通')
+    return
+  }
   if (!cform.keyword.trim()) {
     ElMessage.warning('请输入关键词')
     return
@@ -166,6 +170,10 @@ function cClearResults() {
 }
 
 async function cPreviewComic(item) {
+  if (!isPlus.value) {
+    ElMessage.warning('漫画板块为 Plus 专属，请点击右上角「Lite」开通')
+    return
+  }
   if (cPreviewLoading.value) return
   cPreviewLoading.value = true
   cPreview.value = item
@@ -185,6 +193,10 @@ async function cPreviewComic(item) {
 }
 
 async function cDownloadWhole(item) {
+  if (!isPlus.value) {
+    ElMessage.warning('漫画板块为 Plus 专属，请点击右上角「Lite」开通')
+    return
+  }
   if (cWhole.running) return
   cWhole.running = true
   cWhole.done = 0
@@ -409,6 +421,13 @@ function toggleGroup(g, sites, setSites) {
     setSites(sites.filter((s) => !g.sources.includes(s)))
   } else {
     setSites([...new Set([...sites, ...g.sources])])
+  }
+}
+
+function onModeChange(v) {
+  if (v === 'comic' && !isPlus.value) {
+    mode.value = 'image'
+    ElMessage.warning('漫画板块为 Plus 专属，请点击右上角「Lite」开通')
   }
 }
 
@@ -725,7 +744,7 @@ onBeforeUnmount(() => {
                 <el-radio-button value="detail">详细</el-radio-button>
                 <el-radio-button value="simple">简单</el-radio-button>
               </el-radio-group>
-              <el-radio-group v-model="mode" size="small">
+              <el-radio-group v-model="mode" size="small" @change="onModeChange">
                 <el-radio-button value="image">图片</el-radio-button>
                 <el-radio-button value="novel">小说</el-radio-button>
                 <el-radio-button value="comic">漫画</el-radio-button>
