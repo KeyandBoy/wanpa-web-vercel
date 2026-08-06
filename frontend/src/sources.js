@@ -176,6 +176,53 @@ export const SOURCE_GROUPS = [
         tier: 'plus'
       },
       {
+        id: 'xxknit',
+        label: '爱妹国',
+        desc: '爱妹国（写真/Cosplay 图集）中文站。关键词搜图集，返回封面图；需海外网络。',
+        tag: '写真',
+        tier: 'plus'
+      },
+      {
+        id: 'pornhub',
+        label: 'Pornhub',
+        desc: '成人内容！Pornhub 视频封面图提取，适合视频题材封面素材；需海外节点。',
+        tag: '成人',
+        adult: true,
+        tier: 'plus'
+      },
+      {
+        id: 'pornhub-albums',
+        label: 'Pornhub图集',
+        desc: '成人内容！Pornhub 相册图集，关键词搜索返回图集内高清大图；需海外节点。',
+        tag: '成人',
+        adult: true,
+        tier: 'plus'
+      },
+      {
+        id: 'pornpics',
+        label: 'PornPics',
+        desc: '成人内容！PornPics 色情图片搜索站，关键词搜索返回图片；需海外节点。',
+        tag: '成人',
+        adult: true,
+        tier: 'plus'
+      },
+      {
+        id: 'photos18',
+        label: 'Photos18',
+        desc: '成人内容！Photos18 色情图片站，关键词搜索返回图片；需海外节点。',
+        tag: '成人',
+        adult: true,
+        tier: 'plus'
+      },
+      {
+        id: 'asiantolick',
+        label: 'AsianToLick',
+        desc: '成人内容！AsianToLick 亚洲色情图片站，关键词搜索返回原图；需海外节点。',
+        tag: '成人',
+        adult: true,
+        tier: 'plus'
+      },
+      {
         id: 'custom',
         label: '自定义网址',
         desc: '提取任意网页内的图片（兜底方案）。适合单页批量取图，如推特帖文、图集页面等。',
@@ -228,9 +275,9 @@ export const SIMPLE_GROUPS = [
     id: 'photos_foreign',
     label: '海外写真',
     tag: '写真',
-    desc: '海外写真图站：FoamGirl（需海外网络）',
+    desc: '海外写真图站：FoamGirl/爱妹国（需海外网络）',
     tier: 'plus',
-    sources: ['foamgirl']
+    sources: ['foamgirl', 'xxknit']
   },
   {
     id: 'search_foreign',
@@ -239,25 +286,31 @@ export const SIMPLE_GROUPS = [
     desc: '海外搜索/封面：Yahoo/YouTube封面（需海外网络）',
     tier: 'plus',
     sources: ['yahoo', 'youtube']
+  },
+  {
+    id: 'porn_foreign',
+    label: '海外成人',
+    tag: '成人',
+    adult: true,
+    desc: '海外成人图库：Pornhub/PornHub图集/PornPics/Photos18/AsianToLick（需海外节点）',
+    tier: 'plus',
+    sources: ['pornhub', 'pornhub-albums', 'pornpics', 'photos18', 'asiantolick']
   }
 ]
 
 export const NOVEL_SOURCES = [
-  {
-    id: 'biquga',
-    label: '笔趣阁',
-    desc: '笔趣阁（biquga.com），中文网文小说库；Vercel 云上可直接访问。',
-    tag: '中文',
-    tier: 'lite'
-  },
-  {
-    id: 'hhe62',
-    label: 'hhe62小说',
-    desc: '成人内容！hhe62 成人站小说分类（8 类），关键词匹配最新列表标题返回小说列表，点开阅读正文。需配置 MACCMS_BASE（默认 https://zfxdrshm.top:2549）。',
-    tag: '成人',
-    adult: true,
-    tier: 'plus'
-  }
+  { id: 'aaanovel', label: 'AAA成人小说', desc: 'AAA成人小说，中文情色文学，关键词搜索返回小说文章；需代理。', tag: '中文' },
+  { id: '1000novel', label: '1000成人小说', desc: '1000成人小说，中文情色文学；需代理。', tag: '中文' },
+  { id: 'xbookcn', label: '中文成人文学', desc: '中文成人文学网（Blogger），长篇/短篇情色小说；需代理。', tag: '中文' },
+  { id: 'hhhbook', label: '3H淫书', desc: '3H淫书，中文情色小说；需代理。', tag: '中文' },
+  { id: 'canovel', label: 'CA情色小说', desc: 'CA情色小说，中文成人文学；需代理。', tag: '中文' },
+  { id: 'h528', label: '风月文学网', desc: '风月文学网，中文情色文学；需代理。', tag: '中文' },
+  { id: '69story', label: '69成人小说', desc: '69成人小说网，中文成人文学；需代理。', tag: '中文' },
+  { id: 'biquga', label: '笔趣阁', desc: '笔趣阁（biquga.com），中文网文小说库；Vercel 云上可直接访问。', tag: '中文', tier: 'lite' },
+  { id: 'bdsmcafe', label: 'BDSMCafe', desc: 'BDSMCafe，英文 BDSM 故事站；需代理。', tag: '英文' },
+  { id: 'chyoa', label: 'CHYOA', desc: 'CHYOA，英文互动色情小说站；需代理。', tag: '英文' },
+  { id: 'alicesw', label: '爱丽丝书屋', desc: '爱丽丝书屋（alicesw.com），中文原创小说站（含成人向作品），关键词直接搜索；国内可直连。', tag: '中文' },
+  { id: 'hhe62', label: 'hhe62小说', desc: '成人内容！hhe62 成人站小说分类（8 类），关键词匹配最新列表标题返回小说列表，点开阅读正文。需配置 MACCMS_BASE（默认 https://zfxdrshm.top:2549）。', tag: '中文', adult: true }
 ]
 
 export const SIMPLE_NOVEL_GROUPS = [
@@ -274,9 +327,18 @@ export const SIMPLE_NOVEL_GROUPS = [
     label: '成人小说',
     tag: '成人',
     adult: true,
-    desc: 'hhe62 成人站小说（Plus 专属，成人内容）',
+    desc: 'AAA成人小说/1000成人小说/中文成人文学/3H淫书/CA情色小说/风月文学网/69成人小说/爱丽丝书屋/hhe62小说',
     tier: 'plus',
-    sources: ['hhe62']
+    sources: ['aaanovel', '1000novel', 'xbookcn', 'hhhbook', 'canovel', 'h528', '69story', 'alicesw', 'hhe62']
+  },
+  {
+    id: 'porn_en',
+    label: 'porn英文',
+    tag: '英文',
+    adult: true,
+    desc: 'BDSMCafe/CHYOA',
+    tier: 'plus',
+    sources: ['bdsmcafe', 'chyoa']
   }
 ]
 

@@ -1,25 +1,250 @@
 import base64
 import re
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from maccms_svc import search_novel as _h62_search, get_novel_content as _h62_content
 
 import requests
+from curl_cffi import requests as cr
 
-BASE = "https://www.biquga.com"
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+from trans_svc import to_en, to_zh
+
+# ---------- 辅助 ----------
+def _t2s(text):
+    """繁体中文 -> 简体中文（懒加载 opencc）"""
+    if not text:
+        return text
+    try:
+        from opencc import OpenCC
+        return OpenCC("t2s").convert(text)
+    except Exception:
+        return text
+
+
+def _proxy():
+    p = (
+        os.environ.get("HTTPS_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTP_PROXY")
+        or os.environ.get("http_proxy")
+    )
+    if p:
+        return p
+    return None
 
 
 def _session():
-    s = requests.Session()
-    s.headers.update({"User-Agent": UA, "Referer": BASE + "/"})
+    s = cr.Session(impersonate="chrome")
+    s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"})
+    proxies = {"http": _proxy(), "https": _proxy()} if _proxy() else None
+    s.proxies = proxies
     return s
 
 
-def search_biquga(keyword, page=1, per_page=20):
-    try:
-        r = _session().post(BASE + "/search.html", data={"s": keyword}, timeout=25)
-    except Exception as e:
-        raise ValueError(f"笔趣阁访问失败: {e}") from e
+def _get(url, params=None, session=None):
+    if session:
+        r = session.get(url, params=params, timeout=25)
+    else:
+        proxies = None
+        p = _proxy()
+        if p:
+            proxies = {"http": p, "https": p}
+        r = cr.get(url, params=params, timeout=25, proxies=proxies, impersonate="chrome")
     if r.status_code != 200:
-        raise ValueError(f"笔趣阁访问失败(HTTP {r.status_code})")
+        raise ValueError(f"{url} 访问失败(HTTP {r.status_code})")
+    return r
+
+
+def _post(url, data=None, session=None):
+    if session:
+        r = session.post(url, data=data, timeout=25)
+    else:
+        proxies = None
+        p = _proxy()
+        if p:
+            proxies = {"http": p, "https": p}
+        r = cr.post(url, data=data, timeout=25, proxies=proxies, impersonate="chrome")
+    if r.status_code != 200:
+        raise ValueError(f"{url} 访问失败(HTTP {r.status_code})")
+    return r
+
+
+def _extract_text(html):
+    for pat in (
+        r'<div[^>]*class="[^"]*(?:entry-content|post-content|single-content|article-content|thecontent)[^"]*"[^>]*>(.*?)</div>',
+        r'<article[^>]*>(.*?)</article>',
+        r'<div[^>]*class="[^"]*(?:content|post)[^"]*"[^>]*>(.*?)</div>',
+    ):
+        m = re.search(pat, html, re.S)
+        if m:
+            txt = m.group(1)
+            txt = re.sub(r"<(?:p|div|br|h[1-6]|li)[^>]*>", "\n", txt, flags=re.I)
+            txt = re.sub(r"</(?:p|div|h[1-6]|li)>", "\n", txt, flags=re.I)
+            txt = re.sub(r"<[^>]+>", " ", txt)
+            txt = re.sub(r"[ \t]+", " ", txt)
+            txt = re.sub(r"\n\s*\n+", "\n", txt).strip()
+            if len(txt) > 100:
+                return txt
+    ps = []
+    for m in re.finditer(r"<p[^>]*>(.*?)</p>", html, re.S):
+        t = re.sub(r"<[^>]+>", " ", m.group(1)).strip()
+        if len(t) > 30:
+            ps.append(t)
+    return "\n".join(ps) if ps else None
+
+
+def _clean_text(text):
+    """清理垃圾话/转载声明/广告/HTML实体"""
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"&[a-z]+;", "", text)
+    text = re.sub(r"&#\d+;", "", text)
+    lines = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            lines.append("")
+            continue
+        if re.match(
+            r"^(?:轉載|轉貼|轉自|轉載自|轉貼自|版權|版权所有|copyright|all rights|adsby|本文轉載|www\.|https?://)",
+            line,
+            re.I,
+        ):
+            continue
+        line = re.sub(r"【[^】]*轉[^】]*】", "", line)
+        line = re.sub(r"\(adsbyjuicy.*", "", line)
+        lines.append(line.strip())
+    out = "\n".join(lines)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out
+
+
+def translate_to_zh(text):
+    """英文内容分段翻译为简体中文"""
+    paras = [p for p in text.split("\n") if p.strip()]
+    chunks = []
+    cur = ""
+    for p in paras:
+        if len(cur) + len(p) > 2800:
+            if cur:
+                chunks.append(cur)
+            cur = p
+        else:
+            cur = (cur + "\n" + p) if cur else p
+    if cur:
+        chunks.append(cur)
+    if not chunks:
+        return ""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        results = list(ex.map(to_zh, chunks))
+    return "\n\n".join(results)
+
+
+# ---------- 各源 ----------
+
+SITES = {
+    "aaanovel": {"url": "https://aaanovel.com/", "label": "AAA成人小说", "zh": True},
+    "1000novel": {"url": "https://1000novel.com/", "label": "1000成人小说", "zh": True},
+    "xbookcn": {"url": "https://xbookcn.net/", "label": "中文成人文学", "zh": True},
+    "hhhbook": {"url": "https://hhhbook.com/", "label": "3H淫书", "zh": True},
+    "canovel": {"url": "https://canovel.com/", "label": "CA情色小说", "zh": True},
+    "h528": {"url": "http://www.h528.com/", "label": "风月文学网", "zh": True},
+    "69story": {"url": "https://69story.com/", "label": "69成人小说", "zh": True},
+    "biquga": {"url": "https://www.biquga.com/", "label": "笔趣阁", "zh": True},
+    "bdsmcafe": {"url": "https://bdsmcafe.com/", "label": "BDSMCafe", "zh": False},
+    "chyoa": {"url": "https://chyoa.com/", "label": "CHYOA", "zh": False},
+    "alicesw": {"url": "https://alicesw.com/", "label": "爱丽丝书屋", "zh": True},
+    "hhe62": {"url": "https://zfxdrshm.top:2549/", "label": "hhe62小说", "zh": True},
+}
+
+# Plus 专属小说源（除 biquga 外全部为成人/海外，需激活）
+_PLUS_NOVEL_IDS = {k for k in SITES if k != "biquga"}
+_PLUS_NOVEL_HOSTS = tuple(
+    v["url"].split("//")[1].split("/")[0].split(":")[0].lower()
+    for k, v in SITES.items()
+    if k in _PLUS_NOVEL_IDS
+)
+
+
+def is_plus_novel_url(url):
+    """按 URL 判定小说正文/章节是否属于 Plus 专属源"""
+    if not url:
+        return False
+    u = url.lower()
+    return any(host in u for host in _PLUS_NOVEL_HOSTS)
+
+
+def search_novel(keyword, source, page=1, per_page=20, count=None):
+    if source not in SITES:
+        raise ValueError("不支持的小说源: " + source)
+    if source == "hhe62":
+        return _h62_search(keyword, page, per_page, count=count)
+    if source == "biquga":
+        return _search_biquga(keyword, page, per_page)
+    if source == "alicesw":
+        return _alicesw_search(keyword, page, per_page)
+    # xbookcn / 69story 搜索仅返回分类标签或需繁体词，直接提示
+    if source == "xbookcn":
+        raise ValueError("中文成人文学(xbookcn)站内搜索只返回作品分类，无法按关键词直接检索文章；建议改用 AAA成人小说/3H淫书等支持关键词搜索的源")
+    if source == "69story":
+        raise ValueError("69成人小说搜索接口异常（站点反爬/需繁体关键词），建议改用 AAA成人小说/3H淫书等源")
+    base = SITES[source]["url"]
+    # 英文源：中文搜索词翻译成英文
+    search_kw = to_en(keyword) if not SITES[source]["zh"] else keyword
+    session = _session()
+    try:
+        r = _post(base, data={"s": search_kw})
+    except Exception as e:
+        raise ValueError(f"{SITES[source]['label']} 访问失败: {e}") from e
+    items = []
+    seen = set()
+    for m in re.finditer(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', r.text, re.S):
+        href, inner = m.group(1), m.group(2)
+        title = re.sub(r"<[^>]+>", "", inner).strip()
+        if len(title) < 4 or re.search(r"(login|register|feed|favicon|\.css|\.js)", href, re.I):
+            continue
+        if href.startswith("/"):
+            url = base + href
+        elif href.startswith("http") and base in href:
+            url = href
+        else:
+            continue
+        path = url[len(base):]
+        if path in ("", "/", "/page/") or re.match(r"^/(category|tag|author|feed)/", path):
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        items.append({"title": title[:120], "url": url, "source": source})
+        if len(items) >= per_page:
+            break
+    if not items:
+        raise ValueError(f"{SITES[source]['label']} 没有搜索到结果")
+    # 标题统一为简体中文；英文源再额外翻译
+    if not SITES[source]["zh"]:
+        for it in items:
+            t = _t2s(to_zh(it["title"]))
+            if t != it["title"]:
+                it["title_en"] = it["title"]
+                it["title"] = t
+    else:
+        for it in items:
+            it["title"] = _t2s(it["title"])
+    start = max(page - 1, 0) * per_page
+    return items[start : start + per_page], bool(items)
+
+
+def _search_biquga(keyword, page=1, per_page=20):
+    try:
+        r = _post("https://www.biquga.com/search.html", {"s": keyword})
+    except Exception as e:
+        raise ValueError(f"笔趣阁 访问失败: {e}") from e
+    if r.status_code != 200:
+        raise ValueError(f"笔趣阁 访问失败(HTTP {r.status_code})")
     items = []
     seen = set()
     for m in re.finditer(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', r.text, re.S):
@@ -29,62 +254,207 @@ def search_biquga(keyword, page=1, per_page=20):
             continue
         if len(title) < 2:
             continue
-        url = BASE + href
+        url = "https://www.biquga.com" + href
         if url in seen:
             continue
         seen.add(url)
         items.append({"title": title[:120], "url": url, "source": "biquga"})
     if not items:
-        raise ValueError("笔趣阁没有搜索到结果")
+        raise ValueError("笔趣阁 没有搜索到结果")
     start = max(page - 1, 0) * per_page
     return items[start : start + per_page], bool(items)
 
 
-def get_biquga_content(url):
-    ch_url = url if re.search(r"/\d+_\d+/\d+\.html", url) else _first_chapter(url)
-    if not ch_url:
-        raise ValueError("未找到章节链接")
-    try:
-        r = _session().get(ch_url, timeout=25)
-    except Exception as e:
-        raise ValueError(f"笔趣阁访问失败: {e}") from e
-    if r.status_code != 200:
-        raise ValueError(f"笔趣阁访问失败(HTTP {r.status_code})")
-    text = _decode(r.text)
-    if not text:
-        text = _extract_text(r.text)
-    if not text:
-        raise ValueError("未提取到正文内容")
-    return _clean(text)
+def _biquga_content(html):
+    """笔趣阁正文为 document.writeln(qsbs.bb('base64')) 加密，base64 解码为 HTML 文本"""
+    parts = re.findall(r"qsbs\.bb\(\s*['\"]([^'\"]+)['\"]\s*\)", html)
+    if parts:
+        out = []
+        for b in parts:
+            try:
+                raw = base64.b64decode(b).decode("utf-8", "replace")
+            except Exception:
+                continue
+            raw = re.sub(r"<(?:p|br|div)[^>]*>", "\n", raw, flags=re.I)
+            raw = re.sub(r"<[^>]+>", " ", raw)
+            out.append(raw)
+        text = "".join(out)
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n\s*\n+", "\n", text).strip()
+        if text:
+            return text
+    return None
 
 
-def get_biquga_chapters(url):
+def biquga_chapters(url):
+    """笔趣阁/爱丽丝书屋目录页 -> 全部章节 [{title, url}]（按章节顺序，第一章在前）"""
+    if "alicesw.com" in url:
+        return _alicesw_chapters_url(url)
+    if re.search(r"/\d+_\d+/\d+\.html", url):
+        return []
     try:
-        r = _session().get(url, timeout=25)
+        r = _get(url)
     except Exception as e:
-        raise ValueError(f"笔趣阁访问失败: {e}") from e
+        raise ValueError(f"目录获取失败: {e}") from e
     if r.status_code != 200:
-        raise ValueError(f"笔趣阁访问失败(HTTP {r.status_code})")
+        raise ValueError(f"目录获取失败(HTTP {r.status_code})")
     chapters = []
     seen = set()
+    skip = {"开始阅读", "章节目录", "返回目录", "本书简介", "最新章节"}
     for m in re.finditer(r'<a[^>]+href="(/\d+_\d+/\d+\.html)"[^>]*>(.*?)</a>', r.text, re.S):
         href, inner = m.group(1), m.group(2)
         title = re.sub(r"<[^>]+>", "", inner).strip()
-        if not title:
+        if not title or len(title) < 1 or title in skip:
             continue
-        url = BASE + href
+        url = "https://www.biquga.com" + href
         if url in seen:
             continue
         seen.add(url)
-        chapters.append({"title": title[:120], "url": url})
+        chapters.append({"title": _t2s(title)[:120], "url": url})
     if not chapters:
-        raise ValueError("未获取到章节目录")
+        raise ValueError("目录页没有章节链接")
+    chapters.sort(key=lambda c: int(re.search(r"/(\d+)\.html", c["url"]).group(1)))
     return chapters
 
 
-def _first_chapter(url):
+def _alicesw_text(url):
+    """爱丽丝书屋：正文从 .read-content 容器提取"""
+    for _ in range(3):
+        try:
+            r = _get(url)
+        except Exception:
+            continue
+        if r.status_code != 200:
+            continue
+        m = re.search(r'<div[^>]*class="[^"]*read-content[^"]*"[^>]*>(.*?)</div>', r.text, re.S)
+        if not m:
+            txt = _extract_text(r.text)
+            if txt and len(txt) > 100:
+                return txt
+            continue
+        txt = m.group(1)
+        txt = re.sub(r"<(?:p|div|br|h[1-6]|li)[^>]*>", "\n", txt, flags=re.I)
+        txt = re.sub(r"</(?:p|div|h[1-6]|li)>", "\n", txt, flags=re.I)
+        txt = re.sub(r"<[^>]+>", " ", txt)
+        txt = re.sub(r"[ \t]+", " ", txt)
+        txt = re.sub(r"\n\s*\n+", "\n", txt).strip()
+        if len(txt) > 100:
+            return txt
+    return None
+
+
+def _alicesw_chapters_url(url):
+    """详情页 -> 章节列表（与 biquga_chapters 同签名）"""
+    if "/other/chapters/" in url:
+        try:
+            rc = _get(url)
+        except Exception:
+            return []
+        if rc.status_code != 200:
+            return []
+        chapters = []
+        seen = set()
+        for m in re.finditer(r'<a[^>]+href="(/book/\d+/[^"]+\.html)"[^>]*>(.*?)</a>', rc.text, re.S):
+            href, inner = m.group(1), m.group(2)
+            title = re.sub(r"<[^>]+>", "", inner).strip()
+            if not title:
+                continue
+            u = "https://alicesw.com" + href
+            if u in seen:
+                continue
+            seen.add(u)
+            chapters.append({"title": _t2s(title)[:120], "url": u})
+        return chapters
     try:
-        r = _session().get(url, timeout=25)
+        r = _get(url)
+    except Exception as e:
+        raise ValueError(f"目录获取失败: {e}") from e
+    if r.status_code != 200:
+        raise ValueError(f"目录获取失败(HTTP {r.status_code})")
+    cm = re.search(r'href="(/other/chapters/id/\d+\.html)"', r.text)
+    if not cm:
+        return []
+    return _alicesw_chapters_url("https://alicesw.com" + cm.group(1))
+
+
+def _alicesw_search(keyword, page=1, per_page=20):
+    try:
+        r = _get("https://alicesw.com/search", {"q": keyword})
+    except Exception as e:
+        raise ValueError(f"爱丽丝书屋 访问失败: {e}") from e
+    if r.status_code != 200:
+        raise ValueError(f"爱丽丝书屋 访问失败(HTTP {r.status_code})")
+    items = []
+    seen = set()
+    for m in re.finditer(r'<a[^>]+href="(/novel/\d+\.html)"[^>]*>(.*?)</a>', r.text, re.S):
+        href, inner = m.group(1), m.group(2)
+        title = re.sub(r"<[^>]+>", "", inner).strip()
+        title = re.sub(r"^\d+[\.、]\s*", "", title)
+        if len(title) < 2:
+            continue
+        url = "https://alicesw.com" + href
+        if url in seen:
+            continue
+        seen.add(url)
+        items.append({"title": _t2s(title)[:120], "url": url, "source": "alicesw"})
+    if not items:
+        raise ValueError("爱丽丝书屋 没有搜索到结果")
+    start = max(page - 1, 0) * per_page
+    return items[start : start + per_page], bool(items)
+
+
+def get_novel_content(url, translate=False):
+    if "hhe62" in url or "zfxdrshm.top" in url:
+        return _h62_content(url, translate)
+    if "biquga.com" in url:
+        ch = _biquga_chapter_url(url)
+        if not ch:
+            raise ValueError("未找到章节链接")
+        text = _biquga_text(ch)
+        if not text:
+            raise ValueError("未提取到正文内容")
+        text = _clean_text(text)
+        if not text:
+            raise ValueError("正文内容为空")
+        if translate:
+            text = translate_to_zh(text)
+        return _t2s(text)
+    if "alicesw.com" in url:
+        text = _alicesw_text(url)
+        if not text:
+            raise ValueError("未提取到正文内容")
+        text = _clean_text(text)
+        if not text:
+            raise ValueError("正文内容为空")
+        if translate:
+            text = translate_to_zh(text)
+        return _t2s(text)
+    text = None
+    for attempt in range(3):
+        try:
+            r = _get(url)
+        except Exception:
+            continue
+        if r.status_code == 200:
+            text = _extract_text(r.text)
+            if text and len(text) > 100:
+                break
+    if not text:
+        raise ValueError("未提取到正文内容")
+    text = _clean_text(text)
+    if not text:
+        raise ValueError("正文内容为空")
+    if translate:
+        text = translate_to_zh(text)
+    return _t2s(text)
+
+
+def _biquga_chapter_url(url):
+    """目录页 -> 第一章章节页 URL；已是章节页则原样返回"""
+    if re.search(r"/\d+_\d+/\d+\.html", url):
+        return url
+    try:
+        r = _get(url)
     except Exception:
         return None
     if r.status_code != 200:
@@ -93,97 +463,26 @@ def _first_chapter(url):
     if not chs:
         return None
     chs = sorted(set(chs), key=lambda h: int(re.search(r"/(\d+)\.html", h).group(1)))
-    return BASE + chs[0]
+    return "https://www.biquga.com" + chs[0]
 
 
-def _decode(html):
-    parts = re.findall(r"qsbs\.bb\(\s*['\"]([^'\"]+)['\"]\s*\)", html)
-    if not parts:
-        return None
-    out = []
-    for b in parts:
+def _biquga_text(url):
+    for _ in range(3):
         try:
-            raw = base64.b64decode(b).decode("utf-8", "replace")
+            r = _get(url)
         except Exception:
             continue
-        raw = re.sub(r"<(?:p|br|div)[^>]*>", "\n", raw, flags=re.I)
-        raw = re.sub(r"<[^>]+>", " ", raw)
-        out.append(raw)
-    text = "".join(out)
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n\s*\n+", "\n", text).strip()
-    return text or None
+        if r.status_code == 200:
+            text = _biquga_content(r.text)
+            if text:
+                return text
+            text = _extract_text(r.text)
+            if text and len(text) > 100:
+                return text
+    return None
 
 
-def _extract_text(html):
-    m = re.search(r'<div[^>]*id="content"[^>]*>(.*?)</div>', html, re.S)
-    if m:
-        txt = m.group(1)
-        txt = re.sub(r"<(?:p|div|br)[^>]*>", "\n", txt, flags=re.I)
-        txt = re.sub(r"<[^>]+>", " ", txt)
-        txt = re.sub(r"[ \t]+", " ", txt)
-        txt = re.sub(r"\n\s*\n+", "\n", txt).strip()
-        if len(txt) > 50:
-            return txt
-    ps = []
-    for m in re.finditer(r"<p[^>]*>(.*?)</p>", html, re.S):
-        t = re.sub(r"<[^>]+>", " ", m.group(1)).strip()
-        if len(t) > 30:
-            ps.append(t)
-    return "\n".join(ps) if ps else None
-
-
-def _clean(text):
-    lines = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
-            lines.append("")
-            continue
-        if (
-            "请关闭浏览器阅读模式" in line
-            or "本站所有小说" in line
-            or "搜索功能" in line
-            or "回到目录" in line
-            or "加入书签" in line
-        ):
-            continue
-        if re.match(r"^(上一章|下一章|章节目录|返回目录|回到书页|手机阅读|设置|加入书架|书签)", line):
-            continue
-        if re.match(r"^.{0,4}章.{0,4}推荐|^推荐.{0,6}本章", line):
-            continue
-        if re.search(r"(微信公众号|qq\s*群|qq\s*号|官方群|加群|粉丝群|vx|微信)", line, re.I):
-            continue
-        lines.append(line)
-    out = "\n".join(lines)
-    out = re.sub(r"\n{3,}", "\n\n", out).strip()
-    return out
-
-
-# ============================== 多源分发 ==============================
-def search_novel(keyword, source, page=1, per_page=20, count=None):
-    """小说搜索分发：biquga=笔趣阁 / hhe62=hhe62成人小说"""
-    source = (source or "").lower()
-    if source == "hhe62":
-        from maccms_svc import search_novel as _h62_search
-
-        items, has_more = _h62_search(keyword, page, per_page, count=count)
-        return items, has_more
-    items, has_more = search_biquga(keyword, page, per_page)
-    return items, has_more
-
-
-def get_novel_content(url, translate=False):
-    """正文获取分发：按 URL 判定数据源"""
-    if "hhe62" in url or "zfxdrshm.top" in url:
-        from maccms_svc import get_novel_content as _h62_content
-
-        return _h62_content(url, translate)
-    return get_biquga_content(url)
-
-
-def get_novel_chapters(url):
-    """章节目录分发：仅支持章节式站点；hhe62 为单页正文，返回空"""
-    if "hhe62" in url or "zfxdrshm.top" in url:
-        return []
-    return get_biquga_chapters(url)
+if __name__ == "__main__":
+    # quick test
+    items, has = search_novel("盗墓笔记", "biquga")
+    print(items[:2])

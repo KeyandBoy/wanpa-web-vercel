@@ -14,6 +14,7 @@ from main_engine import (
     http_get,
     pixabay_page,
     search_anime_pictures_page,
+    search_asiantolick_page,
     search_baidu_page,
     search_bing_page,
     search_duitang_page,
@@ -25,7 +26,11 @@ from main_engine import (
     search_meitulu_page,
     search_openverse_page,
     search_pexels_page,
+    search_photos18_page,
     search_pixiv_page,
+    search_pornhub_albums_page,
+    search_pornhub_page,
+    search_pornpics_page,
     search_pxhere_page,
     search_so360_page,
     search_sogou_page,
@@ -37,6 +42,7 @@ from main_engine import (
     search_wikimedia_page,
     search_xiurenai_page,
     search_xsnvshen_page,
+    search_xxknit_page,
     search_yahoo_page,
     search_yande_page,
     search_youtube_page,
@@ -67,6 +73,7 @@ def _get_bing_session():
 def api_search(keyword, source, page, count=20):
     source = source.lower()
     EN_SOURCES = {
+        "pornhub", "pornhub-albums", "pornpics", "asiantolick",
         "foamgirl", "openverse", "wikimedia", "wallhaven", "wallhere", "yande",
         "pxhere", "pixabay", "unsplash", "giphy", "anime-pictures", "pixiv",
     }
@@ -108,6 +115,24 @@ def api_search(keyword, source, page, count=20):
         has_more = bool(items)
     elif source == "youtube":
         items = search_youtube_page(keyword, page)
+        has_more = bool(items)
+    elif source == "pornhub":
+        items = search_pornhub_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "pornhub-albums":
+        items = search_pornhub_albums_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "pornpics":
+        items = search_pornpics_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "photos18":
+        items = search_photos18_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "asiantolick":
+        items = search_asiantolick_page(keyword, max(page - 1, 0))
+        has_more = bool(items)
+    elif source == "xxknit":
+        items = search_xxknit_page(keyword, max(page - 1, 0) + 1)
         has_more = bool(items)
     elif source == "xiurenai":
         items = search_xiurenai_page(keyword, max(page - 1, 0))
@@ -166,7 +191,7 @@ def api_search(keyword, source, page, count=20):
         items, has_more = search_maccms_pic_page(keyword, max(page - 1, 0), count=count)
     else:
         raise ValueError("不支持的数据源: " + source)
-    if source == "foamgirl":
+    if source in ("pornhub-albums", "pornpics", "asiantolick", "foamgirl"):
         try:
             from trans_svc import translate_many
 

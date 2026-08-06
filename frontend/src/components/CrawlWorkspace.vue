@@ -60,7 +60,7 @@ const cWhole = reactive({ running: false, done: 0, total: 0 })
 const cWholeController = ref(null)
 const nform = reactive({
   keyword: '',
-  sources: ['aaanovel'],
+  sources: ['biquga'],
   count: 20,
   layers: []
 })

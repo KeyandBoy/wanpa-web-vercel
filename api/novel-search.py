@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from _auth import check_token
+from _auth import check_token, is_plus_source
 from _core import err_json, ok_json
 from _novel_core import search_novel
 
@@ -26,8 +26,8 @@ class handler(BaseHTTPRequestHandler):
             count = 20
         if not keyword:
             body, headers, status = err_json(400, "keyword 不能为空")
-        elif source == "hhe62" and not check_token(token):
-            body, headers, status = err_json(403, "hhe62 小说为 Plus 专属功能，请先激活 Plus 版本")
+        elif is_plus_source(source) and not check_token(token):
+            body, headers, status = err_json(403, f"{source} 小说为 Plus 专属功能，请先激活 Plus 版本")
         else:
             try:
                 items, has_more = search_novel(keyword, source, page, count=count)

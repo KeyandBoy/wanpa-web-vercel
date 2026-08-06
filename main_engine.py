@@ -826,6 +826,158 @@ def search_foamgirl_page(keyword, page, per_page=20):
     return items
 
 
+def search_pornhub_page(keyword, page, per_page=20):
+    """Pornhub: Cloudflare 反爬, 尽力尝试"""
+    try:
+        r = http_get(
+            "https://www.pornhub.com/video/search",
+            params={"search": keyword, "page": page + 1},
+            retries=1,
+        )
+    except Exception as e:
+        raise ValueError(f"Pornhub 访问失败(可能有 Cloudflare 风控): {e}") from e
+    items = []
+    seen = set()
+    cards = re.findall(r'<li class="pcVideoListItem.*?</li>', r.text, re.S)
+    for card in cards:
+        m = re.search(r'<img[^>]+src="(https?://[^"]+)"', card)
+        if not m:
+            continue
+        u = m.group(1)
+        if (
+            u in seen
+            or "pix-cdn77.phncdn.com" in u
+            or "/images/categories/" in u
+            or "/www-static/" in u
+        ):
+            continue
+        seen.add(u)
+        items.append({"url": u, "title": keyword, "width": None, "height": None})
+        if len(items) >= per_page:
+            break
+    return items[:per_page]
+
+
+def search_pornhub_albums_page(keyword, page, per_page=20):
+    """cn.pornhub.com/albums: Pornhub 图集，进图集提取大图"""
+    try:
+        r = http_get("https://cn.pornhub.com/albums", params={"search": keyword}, timeout=25)
+    except Exception as e:
+        raise ValueError(f"Pornhub 图集访问失败: {e}") from e
+    albums = list(dict.fromkeys(re.findall(r'href="(/album/\d+)"', r.text)))[:8]
+    items = []
+    seen = set()
+    for ap in albums:
+        try:
+            ar = http_get("https://cn.pornhub.com" + ap, timeout=25)
+        except Exception:
+            continue
+        title_m = re.search(r'<title>(.*?)</title>', ar.text, re.S)
+        title = re.sub(r"\s+", " ", title_m.group(1)).strip()[:100] if title_m else keyword
+        for m in re.finditer(r'<img[^>]+(?:src|data-src|data-image)="(https?://(?:pix-fl|ei\.phncdn)[^"]+)"', ar.text):
+            u = m.group(1)
+            if u in seen or "/thumb" in u or "www-static" in u or "/images/" in u:
+                continue
+            seen.add(u)
+            items.append({"url": u, "title": title, "width": None, "height": None, "group": ap})
+            if len(items) >= per_page:
+                break
+        if len(items) >= per_page:
+            break
+    return items
+
+
+def search_pornpics_page(keyword, page, per_page=20):
+    """pornpics.com: 色情图片搜索"""
+    try:
+        r = http_get("https://www.pornpics.com/", params={"q": keyword}, timeout=25)
+    except Exception as e:
+        raise ValueError(f"Pornpics 访问失败: {e}") from e
+    items = []
+    seen = set()
+    for m in re.finditer(r'<img[^>]+(?:src|data-src)="(https?://cdni\.pornpics\.com[^"]+)"[^>]*alt="([^"]*)"', r.text):
+        u, alt = m.group(1), m.group(2)
+        if u in seen:
+            continue
+        seen.add(u)
+        items.append({"url": u, "title": alt or keyword, "width": None, "height": None})
+        if len(items) >= per_page:
+            break
+    return items
+
+
+def search_photos18_page(keyword, page, per_page=20):
+    """photos18.com: 色情图片搜索"""
+    try:
+        r = http_get("https://www.photos18.com/", params={"q": keyword}, timeout=25)
+    except Exception as e:
+        raise ValueError(f"Photos18 访问失败: {e}") from e
+    items = []
+    seen = set()
+    for m in re.finditer(r'<img[^>]+(?:src|data-src)="(/images/node/[^"]+)"', r.text):
+        p = m.group(1).split("?")[0]
+        u = "https://www.photos18.com" + p
+        if u in seen:
+            continue
+        seen.add(u)
+        items.append({"url": u, "title": keyword, "width": None, "height": None})
+        if len(items) >= per_page:
+            break
+    return items
+
+
+def search_asiantolick_page(keyword, page, per_page=20):
+    """asiantolick.com: 亚洲色情图片（原图在 telegra.ph）"""
+    try:
+        r = http_get("https://asiantolick.com/search", params={"q": keyword}, timeout=25)
+    except Exception as e:
+        raise ValueError(f"AsianToLick 访问失败: {e}") from e
+    items = []
+    seen = set()
+    for m in re.finditer(r'<img[^>]+(?:src|data-src)="(https?://wsrv\.nl[^"]+)"', r.text):
+        u = m.group(1)
+        mm = re.search(r"url=([^&]+)", u)
+        if mm:
+            orig = requests.utils.unquote(mm.group(1))
+            if orig.startswith("http") and orig not in seen:
+                seen.add(orig)
+                items.append({"url": orig, "title": keyword, "width": None, "height": None})
+                if len(items) >= per_page:
+                    break
+    return items
+
+
+def search_xxknit_page(keyword, page, per_page=20):
+    """xx.knit.bid (爱妹国写真/Cosplay): SSR 搜索，返回图集封面图"""
+    from curl_cffi import requests as cr
+
+    url = f"https://xx.knit.bid/zh-hant/search/?s={requests.utils.quote(keyword)}"
+    try:
+        r = cr.get(url, impersonate="chrome131", timeout=20)
+        if r.status_code != 200:
+            raise ValueError(f"xx.knit.bid 返回 {r.status_code}")
+    except Exception as e:
+        raise ValueError(f"xx.knit.bid 访问失败: {e}") from e
+
+    items = []
+    cards = re.findall(r'<a\s+href="(/zh-hant/topic/[^"]+)"[^>]*>(.*?)</a>', r.text, re.S)
+    for href, body in cards:
+        m = re.search(r'<img[^>]+src="([^"]+)"[^>]*width="(\d+)"[^>]*height="(\d+)"', body)
+        if not m:
+            continue
+        img_url = m.group(1)
+        if img_url.startswith("/"):
+            img_url = "https://xx.knit.bid" + img_url
+        title_match = re.search(r'<strong[^>]*class="[^"]*topic-entry-title[^"]*"[^>]*>([^<]+)</strong>', body)
+        title = (title_match.group(1).strip() if title_match else keyword)
+        width = int(m.group(2))
+        height = int(m.group(3))
+        items.append({"url": img_url, "title": title, "width": width, "height": height, "group": href})
+        if len(items) >= per_page:
+            break
+    return items
+
+
 def search_unsplash_page(keyword, page, api_key, per_page=20):
     """Unsplash: 官方 API (需 key), 无 key 时尝试站内 napi"""
     if api_key:
