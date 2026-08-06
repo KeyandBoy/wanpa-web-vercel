@@ -52,10 +52,11 @@ def http_get(url, params=None, timeout=20, retries=3, session=None, verify=True,
     raise last
 
 
-def search_bing_page(keyword, page, per_page=35):
+def search_bing_page(keyword, page, per_page=35, session=None):
     r = http_get(
         "https://www.bing.com/images/search",
         params={"q": keyword, "first": page * per_page, "count": per_page},
+        session=session,
     )
     soup = BeautifulSoup(r.text, "html.parser")
     items = []
@@ -80,16 +81,35 @@ def search_bing_page(keyword, page, per_page=35):
     return items
 
 
+def _bing_session():
+    try:
+        from curl_cffi import requests as cr
+
+        s = cr.Session(impersonate="chrome")
+    except Exception:
+        s = requests.Session()
+    try:
+        s.get("https://www.bing.com", timeout=20)
+    except Exception:
+        pass
+    return s
+
+
 def search_bing(keyword, count, delay):
+    session = _bing_session()
     results = []
     page = 0
     while len(results) < count:
-        found = search_bing_page(keyword, page)
+        found = search_bing_page(keyword, page, session=session)
         if not found:
             break
         results.extend(found)
         page += 1
         time.sleep(delay * random.uniform(0.5, 1.5))
+    try:
+        session.close()
+    except Exception:
+        pass
     return results[:count]
 
 

@@ -49,6 +49,20 @@ BLOCKED_HOSTS = re.compile(
     re.I,
 )
 
+_BING_SESSION = None
+
+
+def _get_bing_session():
+    global _BING_SESSION
+    if _BING_SESSION is None:
+        try:
+            from main_engine import _bing_session
+
+            _BING_SESSION = _bing_session()
+        except Exception:
+            _BING_SESSION = None
+    return _BING_SESSION
+
 
 def api_search(keyword, source, page, count=20):
     source = source.lower()
@@ -65,7 +79,7 @@ def api_search(keyword, source, page, count=20):
         except Exception:
             pass
     if source == "bing":
-        items = search_bing_page(keyword, max(page - 1, 0))
+        items = search_bing_page(keyword, max(page - 1, 0), session=_get_bing_session())
         has_more = bool(items)
     elif source == "baidu":
         items = search_baidu_page(keyword, max(page - 1, 0))
