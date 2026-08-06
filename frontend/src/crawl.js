@@ -283,17 +283,25 @@ export async function runCrawl({
     if (signal?.aborted) break
     const srcMeta = meta.filter((m) => m.source === source)
     if (srcMeta.length) {
-      await sink.writeMetadata(
-        `${keyword}/图片/metadata.json`,
-        srcMeta.map(({ remote_url, ...rest }) => rest)
-      )
+      try {
+        await sink.writeMetadata(
+          `${keyword}/图片/metadata.json`,
+          srcMeta.map(({ remote_url, ...rest }) => rest)
+        )
+      } catch (e) {
+        onLog?.(`${source}: 写入 metadata 失败(不影响主任务): ${e.message}`)
+      }
     }
     onLog?.(`${source}: 下载 ${srcDownloaded} | 去重跳过 ${dup} | 失败 ${srcFailed}`)
   }
 
   const all = meta.map(({ remote_url, ...rest }) => rest)
   if (all.length) {
-    await sink.writeMetadata(`${keyword}/图片/metadata.json`, all)
+    try {
+      await sink.writeMetadata(`${keyword}/图片/metadata.json`, all)
+    } catch (e) {
+      onLog?.(`写入 metadata 失败(不影响主任务): ${e.message}`)
+    }
   }
   if (sink && typeof sink.appendReport === 'function') {
     try {
@@ -463,7 +471,7 @@ export function createBlobSink(taskId) {
     async writeMetadata(path, meta) {
       if (meta.length) {
         const blob = new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' })
-        const r = await api.uploadBlob(taskId, `meta_${meta.length}_${Date.now()}`, blob)
+        const r = await api.uploadBlob(taskId, `meta_${meta.length}_${Date.now()}`, 'json', blob)
         urls.push(r.url)
       }
     },
