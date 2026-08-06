@@ -484,7 +484,7 @@ export function createBlobSink(taskId) {
     getReportFiles: () => reports,
     getUrls: () => urls,
     async cleanup() {
-      await api.cleanupBlob(taskId)
+      await api.cleanupBlob(`crawl/${taskId}`)
     },
   }
 }
