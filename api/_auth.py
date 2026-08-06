@@ -9,23 +9,27 @@ from _kv import delete, get, set
 # token 存储键：token:<token> -> code（激活后写入，用于 Plus 接口鉴权）
 _SECRET = os.environ.get("WANPA_PLUS_SECRET") or "wanpa-plus-default-secret"
 
-# 管理员主激活码：不写入 KV 码池，永久有效、可多次验证、重启不丢。
-# 仅从环境变量 WANPA_MASTER_CODE 读取（隐私密码，绝不硬编码进代码/仓库）。
+# 管理员主激活码列表：不写入 KV 码池，永久有效、可多次验证、重启不丢。
+# 从环境变量 WANPA_MASTER_CODE 读取，支持逗号分隔多个码（隐私密码，绝不硬编码进代码/仓库）。
 # 未设置则无主码功能，仅普通激活码可用。
-_MASTER_CODE = (os.environ.get("WANPA_MASTER_CODE") or "").strip().upper()
+_MASTER_CODES = [
+    c.strip().upper()
+    for c in (os.environ.get("WANPA_MASTER_CODE") or "").split(",")
+    if c.strip()
+]
 
 
 def _sig(code):
     return hmac.new(_SECRET.encode(), ("plus:" + code).encode(), hashlib.sha256).hexdigest()
 
 
-def _master_token():
-    # 主码 token 是确定性的，check_token 无需查 KV 即可验证
-    return _sig("MASTER:" + _MASTER_CODE)
+def _master_tokens():
+    # 每个主码各自有确定性 token，check_token 无需查 KV 即可验证
+    return {_sig("MASTER:" + c) for c in _MASTER_CODES}
 
 
 def is_master_code(code):
-    return bool(_MASTER_CODE) and code == _MASTER_CODE
+    return bool(_MASTER_CODES) and code in _MASTER_CODES
 
 
 def new_code():
@@ -58,7 +62,7 @@ def verify_code(code):
         return None
     code = code.strip().upper()
     if is_master_code(code):
-        return _master_token()
+        return _sig("MASTER:" + code)
     rec = get("code:" + code)
     if rec is None:
         return None
@@ -71,7 +75,7 @@ def check_token(token):
     """校验 Plus token 是否有效（已激活的码签发过）"""
     if not token:
         return False
-    if token == _master_token():
+    if token in _master_tokens():
         return True
     return get("token:" + token) is not None
 
@@ -80,7 +84,9 @@ def is_plus_source(source):
     """哪些图片/小说源属于 Plus 专属（成人/海外/需要激活）"""
     plus = {
         "hhe62", "foamgirl", "pixiv", "anime-pictures", "meitulu", "xsnvshen",
-        "pornpics", "photos18", "asiantolick",
+        "pornpics", "photos18", "asiantolick", "pornhub", "pornhub-albums", "xxknit",
+        "aaanovel", "1000novel", "xbookcn", "hhhbook", "canovel", "h528", "69story", "alicesw",
+        "bdsmcafe", "chyoa",
     }
     return source in plus
 
