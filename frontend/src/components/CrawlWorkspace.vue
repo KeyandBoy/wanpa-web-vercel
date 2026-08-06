@@ -12,6 +12,8 @@ import {
   createFolderSink,
   createMemorySink,
   downloadZip,
+  formatReport,
+  nowTime,
   passLayers,
   runCrawl,
   sanitizeName
@@ -302,7 +304,7 @@ async function start() {
       return
     }
     try {
-      await s.prepare(form.sites.map((src) => `${form.keyword.trim()}/图片/${src}`))
+      await s.prepare([`${form.keyword.trim()}/图片`])
     } catch (e) {
       running.value = false
       ElMessage.error(`文件夹写入授权失败: ${e.message}`)
@@ -372,6 +374,9 @@ async function buildFiles() {
   for (const img of images.value) {
     const blob = await fetch(img.url).then((r) => r.blob())
     files.push({ path: img.path, blob })
+  }
+  if (sinkType.value === 'blob' && sink.value.getReportFiles) {
+    files.push(...sink.value.getReportFiles())
   }
   return files
 }
@@ -600,6 +605,7 @@ async function nDownloadWhole(item) {
     const workers = 6
     let idx = 0
     let fail = 0
+    const failRec = []
     const run = async () => {
       while (idx < chapters.length) {
         const i = idx++
@@ -611,9 +617,11 @@ async function nDownloadWhole(item) {
             parts.push(`\n\n${ch.title}\n\n${c.content}`)
           } else {
             fail += 1
+            failRec.push({ time: nowTime(), source: item.source, url: ch.url, title: ch.title, error: '内容为空' })
           }
         } catch (e) {
           fail += 1
+          failRec.push({ time: nowTime(), source: item.source, url: ch.url, title: ch.title, error: e.message })
         }
         nWhole.done++
       }
@@ -621,9 +629,18 @@ async function nDownloadWhole(item) {
     await Promise.all(Array.from({ length: Math.min(workers, chapters.length) }, run))
     const text = parts.join('')
     const title = sanitizeName(item.title)
-    const path = `${nform.keyword.trim() || 'novel'}/小说/biquga/${title}.txt`
+    const path = `${nform.keyword.trim() || 'novel'}/小说/${title}.txt`
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
     await sink.save({ path, blob })
+    const txt = formatReport(nform.keyword.trim() || 'novel', '小说', [{
+      time: nowTime(),
+      source: item.source,
+      url: item.url,
+      title: item.title,
+      size: blob.size,
+      path,
+    }], failRec)
+    await sink.appendReport?.(`${nform.keyword.trim() || 'novel'}/小说/下载信息.txt`, txt)
     pushNovelLog(`整本完成: ${title}.txt (${chapters.length} 章${fail ? `, ${fail} 章失败` : ''})`)
     ElMessage.success(`整本已保存到 ${dirName}`)
   } catch (e) {
@@ -669,9 +686,18 @@ async function nSaveTxt() {
       return
     }
     const title = sanitizeName(nReading.value.title)
-    const path = `${nform.keyword.trim() || 'novel'}/小说/${nReading.value.source}/${title}.txt`
+    const path = `${nform.keyword.trim() || 'novel'}/小说/${title}.txt`
     const blob = new Blob([nContent.value], { type: 'text/plain;charset=utf-8' })
     await sink.save({ path, blob })
+    const txt = formatReport(nform.keyword.trim() || 'novel', '小说', [{
+      time: nowTime(),
+      source: nReading.value.source,
+      url: nReading.value.url,
+      title: nReading.value.title,
+      size: blob.size,
+      path,
+    }], [])
+    await sink.appendReport?.(`${nform.keyword.trim() || 'novel'}/小说/下载信息.txt`, txt)
     pushNovelLog(`已保存: ${path}`)
     ElMessage.success(`已保存到: ${dir.name}/${path}`)
   } catch (e) {
@@ -709,6 +735,8 @@ async function nStartDownload() {
     const targets = nResults.value.slice(0, nform.count)
     nTotal.value = targets.length
     nDone.value = 0
+    const okRec = []
+    const failRec = []
     pushNovelLog(`开始爬取 ${targets.length} 篇小说...`)
     for (let i = 0; i < targets.length; i++) {
       const it = targets[i]
@@ -718,15 +746,19 @@ async function nStartDownload() {
         if (!r.content) throw new Error('正文为空')
         let content = r.content
         const title = sanitizeName(it.title)
-        const path = `${nform.keyword.trim() || 'novel'}/小说/${it.source}/${title}.txt`
+        const path = `${nform.keyword.trim() || 'novel'}/小说/${title}.txt`
         const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
         await sink.save({ path, blob })
+        okRec.push({ time: nowTime(), source: it.source, url: it.url, title: it.title, size: blob.size, path })
         pushNovelLog(`[${i + 1}/${targets.length}] 已保存: ${title}.txt`)
       } catch (e) {
+        failRec.push({ time: nowTime(), source: it.source, url: it.url, title: it.title, error: e.message })
         pushNovelLog(`[${i + 1}/${targets.length}] 保存失败: ${it.title} → ${e.message}`)
       }
       nDone.value++
     }
+    const txt = formatReport(nform.keyword.trim() || 'novel', '小说', okRec, failRec)
+    await sink.appendReport?.(`${nform.keyword.trim() || 'novel'}/小说/下载信息.txt`, txt)
     ElMessage.success(`完成，已保存到 ${dirName}`)
   } catch (e) {
     ElMessage.error(`爬取失败: ${e.message}`)

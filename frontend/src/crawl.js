@@ -2,6 +2,39 @@ import { api } from './api'
 
 const WATERMARK_MARKS = ['watermark', 'shuiyin', 'logo', 'mark', 'sign']
 
+export function nowTime() {
+  const d = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+export function fmtSize(bytes) {
+  if (bytes == null || isNaN(bytes)) return ''
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)}MB`
+}
+
+export function formatReport(keyword, type, ok, fail) {
+  const lines = []
+  lines.push(`========== 下载记录 | 任务: ${keyword} | 类型: ${type} ==========`)
+  lines.push(`时间: ${nowTime()}`)
+  lines.push('')
+  lines.push(`【成功文件】 ${ok.length} 个`)
+  ok.forEach((r, i) => {
+    const spec = r.width && r.height ? `${r.width}x${r.height}` : r.spec || ''
+    lines.push(
+      `#${i + 1}  时间=${r.time}  数据源=${r.source || ''}  网址=${r.url || ''}  标题=${r.title || ''}  规格=${spec}  大小=${fmtSize(r.size)}  文件=${r.path || ''}`
+    )
+  })
+  lines.push('')
+  lines.push(`【失败记录】 ${fail.length} 个`)
+  fail.forEach((r, i) => {
+    lines.push(`#${i + 1}  时间=${r.time}  数据源=${r.source || ''}  网址=${r.url || ''}  失败原因=${r.error || ''}`)
+  })
+  return lines.join('\n') + '\n'
+}
+
 export const canPickFolder = () =>
   typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
 
@@ -127,6 +160,7 @@ export async function runCrawl({
   signal,
 }) {
   const meta = []
+  const failures = []
   let downloaded = 0
   let dup = 0
   let failed = 0
@@ -216,11 +250,13 @@ export async function runCrawl({
         seenHashes.add(digest)
         seq += 1
         const ext = extFromType(blob.type)
-        const path = `${keyword}/图片/${source}/${keyword}_${source}_${String(seq).padStart(3, '0')}.${ext}`
+        const path = `${keyword}/图片/${keyword}_${source}_${String(seq).padStart(3, '0')}.${ext}`
         const saved = await sink.save({ path, seq, blob, item })
         meta.push({
+          time: nowTime(),
           keyword,
           source,
+          title: item.title ?? '',
           url: item.url,
           path,
           width: item.width ?? null,
@@ -237,6 +273,7 @@ export async function runCrawl({
         if (e.name === 'AbortError') return
         failed += 1
         srcFailed += 1
+        failures.push({ time: nowTime(), source, url: item.url, error: e.message })
         if (failed <= 8) {
           onLog?.(`${source}: 下载失败: ${e.message} | ${item.url.slice(0, 100)}`)
         }
@@ -247,7 +284,7 @@ export async function runCrawl({
     const srcMeta = meta.filter((m) => m.source === source)
     if (srcMeta.length) {
       await sink.writeMetadata(
-        `${keyword}/图片/${source}/metadata.json`,
+        `${keyword}/图片/metadata.json`,
         srcMeta.map(({ remote_url, ...rest }) => rest)
       )
     }
@@ -257,6 +294,23 @@ export async function runCrawl({
   const all = meta.map(({ remote_url, ...rest }) => rest)
   if (all.length) {
     await sink.writeMetadata(`${keyword}/图片/metadata.json`, all)
+  }
+  if (sink && typeof sink.appendReport === 'function') {
+    try {
+      const ok = all.map((m) => ({
+        time: m.time,
+        source: m.source,
+        url: m.url,
+        title: m.title,
+        width: m.width,
+        height: m.height,
+        size: m.size_bytes,
+        path: m.path,
+      }))
+      await sink.appendReport(`${keyword}/图片/下载信息.txt`, formatReport(keyword, '图片', ok, failures))
+    } catch {
+      /* ignore */
+    }
   }
   onLog?.(`任务结束: 共下载 ${downloaded} 张 | 去重 ${dup} | 失败 ${failed}`)
   return { meta }
@@ -348,6 +402,26 @@ export function createFolderSink() {
       await w.write(JSON.stringify(meta, null, 2))
       await w.close()
     },
+    async appendReport(path, text) {
+      const parts = path.split('/')
+      let dir = this.dirHandle
+      for (const p of parts.slice(0, -1)) {
+        dir = await dir.getDirectoryHandle(p, { create: true })
+      }
+      let existing = ''
+      try {
+        const fh = await dir.getFileHandle(parts[parts.length - 1])
+        const file = await fh.getFile()
+        existing = await file.text()
+      } catch {
+        /* 文件不存在则新建 */
+      }
+      const blob = new Blob([existing, text], { type: 'text/plain;charset=utf-8' })
+      const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true })
+      const w = await fh.createWritable()
+      await w.write(blob)
+      await w.close()
+    },
   }
 }
 
@@ -366,12 +440,19 @@ export function createMemorySink() {
         })
       }
     },
+    async appendReport(path, text) {
+      files.push({
+        path,
+        blob: new Blob([text], { type: 'text/plain;charset=utf-8' }),
+      })
+    },
     getFiles: () => files,
   }
 }
 
 export function createBlobSink(taskId) {
   const urls = []
+  const reports = []
   return {
     async save({ path, seq, blob }) {
       const ext = extFromType(blob.type)
@@ -386,6 +467,13 @@ export function createBlobSink(taskId) {
         urls.push(r.url)
       }
     },
+    async appendReport(path, text) {
+      reports.push({
+        path,
+        blob: new Blob([text], { type: 'text/plain;charset=utf-8' }),
+      })
+    },
+    getReportFiles: () => reports,
     getUrls: () => urls,
     async cleanup() {
       await api.cleanupBlob(taskId)
