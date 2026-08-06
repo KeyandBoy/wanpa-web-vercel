@@ -6,6 +6,7 @@ import { initLicense, license } from './license'
 
 const isDark = ref(false)
 const showVersion = ref(false)
+const guideOpen = ref(true)
 
 const versionLabel = computed(() => (license.version === 'plus' ? 'Plus' : 'Lite'))
 
@@ -20,6 +21,7 @@ function toggleTheme() {
 onMounted(() => {
   initLicense()
   isDark.value = document.documentElement.getAttribute('data-theme') === 'dark'
+  guideOpen.value = window.innerWidth >= 992
 })
 </script>
 
@@ -72,9 +74,12 @@ onMounted(() => {
       <el-main class="main">
         <el-alert class="guide" type="error" :closable="false">
           <template #title>
-            <div class="guide-title">使用指南与注意事项</div>
+            <button class="guide-toggle" type="button" @click="guideOpen = !guideOpen">
+              <span>使用指南与注意事项</span>
+              <span class="guide-caret" :class="{ open: guideOpen }">▾</span>
+            </button>
           </template>
-          <div class="guide-body">
+          <div v-show="guideOpen" class="guide-body">
             <p><b>使用指南：</b>切换「图片 / 小说 / 漫画」模式，输入关键词并勾选数据源（Lite 版使用免费国内源；Plus 版解锁海外图库、漫画、AI 摘要等全部功能，点击右上角版本按钮可开通）。可添加「多层筛选」规则，对搜索结果逐层过滤（层间取交集，层内关键词取并集）；小说支持阅读与 AI 摘要，完成后可打包 ZIP 下载。更多操作请见右侧各区域提示。</p>
             <p><b>禁止事项：</b>请仅将本工具用于合法、个人学习用途，遵守目标网站的使用条款与 robots 协议，尊重版权，严禁用于任何违反法律法规的行为。</p>
             <p><b>注意：</b>请合理控制并发与数量，避免对目标站点造成压力；本站仅提供技术演示，使用者需自行承担相关责任。</p>
@@ -195,6 +200,27 @@ onMounted(() => {
 .guide-title {
   font-weight: 700;
 }
+.guide-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.guide-caret {
+  transition: transform 0.2s ease;
+  font-size: 12px;
+  color: var(--text-sub);
+}
+.guide-caret.open {
+  transform: rotate(180deg);
+}
 .guide-body {
   font-size: 13px;
   line-height: 1.7;
@@ -203,4 +229,40 @@ onMounted(() => {
   margin: 4px 0;
   color: #f56c6c;
 }
+
+@media (max-width: 991px) {
+  .header {
+    height: 56px;
+    padding: 0 12px;
+  }
+  .logo {
+    width: 30px;
+    height: 30px;
+  }
+  .brand-title {
+    font-size: 18px;
+    letter-spacing: 0.5px;
+  }
+  .sub {
+    display: none;
+  }
+  .main {
+    padding: 12px 10px calc(64px + env(safe-area-inset-bottom));
+  }
+  .guide {
+    margin-bottom: 12px;
+  }
+  .guide-body {
+    font-size: 12px;
+  }
+  .version-btn {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .theme-btn {
+    width: 34px;
+    height: 34px;
+  }
+}
+
 </style>

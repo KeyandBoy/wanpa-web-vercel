@@ -36,6 +36,11 @@ const form = reactive({
 
 const mode = ref('image')
 const viewMode = ref('detail')
+const navTabs = [
+  { label: '图片', value: 'image' },
+  { label: '小说', value: 'novel' },
+  { label: '漫画', value: 'comic' },
+]
 const leftWidth = ref(420)
 const cform = reactive({
   keyword: '',
@@ -530,6 +535,12 @@ function nClearResults() {
   nResults.value = []
   nReading.value = null
   nContent.value = ''
+}
+
+function nCloseReader() {
+  nReading.value = null
+  nContent.value = ''
+  nSummary.value = ''
 }
 
 async function nRead(item) {
@@ -1087,8 +1098,13 @@ onBeforeUnmount(() => {
 
       <el-card v-if="mode === 'novel'" shadow="never" class="player-card">
         <template #header>
-          阅读
-          <span v-if="nReading" class="dim">{{ nReading.title }}</span>
+          <div class="player-head">
+            <span class="player-title">
+              阅读
+              <span v-if="nReading" class="dim">{{ nReading.title }}</span>
+            </span>
+            <el-button v-if="nReading" class="player-close" size="small" link @click="nCloseReader">关闭</el-button>
+          </div>
         </template>
         <div v-if="nContentLoading" class="preview-loading">加载正文中...</div>
         <template v-else-if="nContent">
@@ -1165,6 +1181,19 @@ onBeforeUnmount(() => {
         </div>
       </el-card>
     </div>
+  </div>
+
+  <div class="mobile-nav">
+    <button
+      v-for="t in navTabs"
+      :key="t.value"
+      class="mobile-nav-item"
+      :class="{ active: mode === t.value }"
+      type="button"
+      @click="onModeChange(t.value)"
+    >
+      {{ t.label }}
+    </button>
   </div>
 </template>
 
@@ -1618,6 +1647,21 @@ onBeforeUnmount(() => {
 .player-card {
   margin-top: 16px;
 }
+.player-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.player-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.player-close {
+  flex-shrink: 0;
+}
 .vres-item {
   cursor: pointer;
   transition: background 0.15s;
@@ -1625,4 +1669,102 @@ onBeforeUnmount(() => {
 .vres-item:hover {
   background: #f5f7fa;
 }
+
+.mobile-nav {
+  display: none;
+}
+
+@media (max-width: 991px) {
+  .workspace {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .left {
+    width: 100% !important;
+    flex-shrink: 1;
+  }
+  .left-handle {
+    display: none;
+  }
+  .right {
+    width: 100%;
+  }
+  .player-card {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    margin: 0;
+    border-radius: 0;
+    background: var(--card);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .player-card .el-card__body {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+  .player-card .el-card__header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--card);
+  }
+  .mobile-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 900;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .mobile-nav-item {
+    flex: 1;
+    height: 50px;
+    border: none;
+    background: transparent;
+    color: var(--text-sub);
+    font-size: 15px;
+    cursor: pointer;
+    border-top: 2px solid transparent;
+    transition: color 0.2s ease, border-color 0.2s ease;
+  }
+  .mobile-nav-item.active {
+    color: var(--brand);
+    border-top-color: var(--brand);
+    font-weight: 600;
+  }
+  .card-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .head-right {
+    flex-wrap: wrap;
+  }
+  .el-form-item {
+    margin-bottom: 14px;
+  }
+  .actions .el-button,
+  .actions .el-button + .el-button {
+    margin-left: 0;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .actions .el-button {
+    flex: 1;
+    min-height: 40px;
+    margin-left: 0;
+  }
+  .gallery {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+  .comic-wall {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
 </style>

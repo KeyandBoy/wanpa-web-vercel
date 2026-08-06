@@ -45,6 +45,9 @@ onMounted(async () => {
 
 const isUnlocked = computed(() => license.version === 'plus')
 
+const isMobile = computed(() => typeof window !== 'undefined' && window.innerWidth < 992)
+const dialogWidth = computed(() => (isMobile.value ? '100%' : '640px'))
+
 const FEATURES = [
   { lite: true, plus: true, text: '国内图片搜索（必应/百度/360/堆糖/秀人）' },
   { lite: true, plus: true, text: '自定义网址图片提取' },
@@ -134,7 +137,8 @@ function copyCode() {
   <el-dialog
     :model-value="visible"
     title="版本与激活"
-    width="640px"
+    :width="dialogWidth"
+    :fullscreen="isMobile"
     :close-on-click-modal="false"
     @close="resetForm"
   >
@@ -414,4 +418,30 @@ function copyCode() {
   color: #909399;
   line-height: 1.7;
 }
+
+@media (max-width: 991px) {
+  .pay-qrs {
+    flex-direction: column;
+    gap: 16px;
+    align-items: center;
+  }
+  .cmp-lite,
+  .cmp-plus {
+    width: 64px;
+    font-size: 12px;
+  }
+  .cmp-row {
+    padding: 8px 0;
+  }
+  .steps .step-label {
+    font-size: 12px;
+  }
+  .activate-actions {
+    flex-wrap: wrap;
+  }
+  .el-form-item {
+    margin-bottom: 14px;
+  }
+}
+
 </style>
