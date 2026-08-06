@@ -238,9 +238,20 @@ def search_novel(keyword, source, page=1, per_page=20, count=None):
     return items[start : start + per_page], bool(items)
 
 
+def _biquga_session():
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Referer": "https://www.biquga.com/",
+    })
+    return s
+
+
 def _search_biquga(keyword, page=1, per_page=20):
     try:
-        r = _post("https://www.biquga.com/search.html", {"s": keyword})
+        r = _biquga_session().post(
+            "https://www.biquga.com/search.html", data={"s": keyword}, timeout=25
+        )
     except Exception as e:
         raise ValueError(f"笔趣阁 访问失败: {e}") from e
     if r.status_code != 200:
@@ -293,7 +304,7 @@ def biquga_chapters(url):
     if re.search(r"/\d+_\d+/\d+\.html", url):
         return []
     try:
-        r = _get(url)
+        r = _biquga_session().get(url, timeout=25)
     except Exception as e:
         raise ValueError(f"目录获取失败: {e}") from e
     if r.status_code != 200:
@@ -454,7 +465,7 @@ def _biquga_chapter_url(url):
     if re.search(r"/\d+_\d+/\d+\.html", url):
         return url
     try:
-        r = _get(url)
+        r = _biquga_session().get(url, timeout=25)
     except Exception:
         return None
     if r.status_code != 200:
@@ -469,7 +480,7 @@ def _biquga_chapter_url(url):
 def _biquga_text(url):
     for _ in range(3):
         try:
-            r = _get(url)
+            r = _biquga_session().get(url, timeout=25)
         except Exception:
             continue
         if r.status_code == 200:
