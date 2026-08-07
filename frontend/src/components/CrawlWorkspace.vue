@@ -438,7 +438,9 @@ function onModeChange(v) {
   if (v === 'comic' && !isPlus.value) {
     mode.value = 'image'
     ElMessage.warning('漫画板块为 Plus 专属，请点击右上角「Lite」开通')
+    return
   }
+  mode.value = v
 }
 
 // ---- 版本分流 ----
