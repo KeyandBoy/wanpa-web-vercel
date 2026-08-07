@@ -299,18 +299,18 @@ export const SIMPLE_GROUPS = [
 ]
 
 export const NOVEL_SOURCES = [
-  { id: 'aaanovel', label: 'AAA成人小说', desc: 'AAA成人小说，中文情色文学，关键词搜索返回小说文章；需代理。', tag: '中文' },
-  { id: '1000novel', label: '1000成人小说', desc: '1000成人小说，中文情色文学；需代理。', tag: '中文' },
-  { id: 'xbookcn', label: '中文成人文学', desc: '中文成人文学网（Blogger），长篇/短篇情色小说；需代理。', tag: '中文' },
-  { id: 'hhhbook', label: '3H淫书', desc: '3H淫书，中文情色小说；需代理。', tag: '中文' },
-  { id: 'canovel', label: 'CA情色小说', desc: 'CA情色小说，中文成人文学；需代理。', tag: '中文' },
-  { id: 'h528', label: '风月文学网', desc: '风月文学网，中文情色文学；需代理。', tag: '中文' },
-  { id: '69story', label: '69成人小说', desc: '69成人小说网，中文成人文学；需代理。', tag: '中文' },
+  { id: 'aaanovel', label: 'AAA成人小说', desc: 'AAA成人小说，中文情色文学，关键词搜索返回小说文章；需代理。', tag: '中文', adult: true, tier: 'plus' },
+  { id: '1000novel', label: '1000成人小说', desc: '1000成人小说，中文情色文学；需代理。', tag: '中文', adult: true, tier: 'plus' },
+  { id: 'xbookcn', label: '中文成人文学', desc: '中文成人文学网（Blogger），长篇/短篇情色小说；需代理。', tag: '中文', adult: true, tier: 'plus' },
+  { id: 'hhhbook', label: '3H淫书', desc: '3H淫书，中文情色小说；需代理。', tag: '中文', adult: true, tier: 'plus' },
+  { id: 'canovel', label: 'CA情色小说', desc: 'CA情色小说，中文成人文学；需代理。', tag: '中文', adult: true, tier: 'plus' },
+  { id: 'h528', label: '风月文学网', desc: '风月文学网，中文情色文学；需代理。', tag: '中文', adult: true, tier: 'plus' },
+  { id: '69story', label: '69成人小说', desc: '69成人小说网，中文成人文学；需代理。', tag: '中文', adult: true, tier: 'plus' },
   { id: 'biquga', label: '笔趣阁', desc: '笔趣阁（biquga.com），中文网文小说库；Vercel 云上可直接访问。', tag: '中文', tier: 'lite' },
-  { id: 'bdsmcafe', label: 'BDSMCafe', desc: 'BDSMCafe，英文 BDSM 故事站；需代理。', tag: '英文' },
-  { id: 'chyoa', label: 'CHYOA', desc: 'CHYOA，英文互动色情小说站；需代理。', tag: '英文' },
-  { id: 'alicesw', label: '爱丽丝书屋', desc: '爱丽丝书屋（alicesw.com），中文原创小说站（含成人向作品），关键词直接搜索；国内可直连。', tag: '中文' },
-  { id: 'hhe62', label: 'hhe62小说', desc: '成人内容！hhe62 成人站小说分类（8 类），关键词匹配最新列表标题返回小说列表，点开阅读正文。需配置 MACCMS_BASE（默认 https://zfxdrshm.top:2549）。', tag: '中文', adult: true }
+  { id: 'bdsmcafe', label: 'BDSMCafe', desc: 'BDSMCafe，英文 BDSM 故事站；需代理。', tag: '英文', adult: true, tier: 'plus' },
+  { id: 'chyoa', label: 'CHYOA', desc: 'CHYOA，英文互动色情小说站；需代理。', tag: '英文', adult: true, tier: 'plus' },
+  { id: 'alicesw', label: '爱丽丝书屋', desc: '爱丽丝书屋（alicesw.com），中文原创小说站（含成人向作品），关键词直接搜索；国内可直连。', tag: '中文', adult: true, tier: 'plus' },
+  { id: 'hhe62', label: 'hhe62小说', desc: '成人内容！hhe62 成人站小说分类（8 类），关键词匹配最新列表标题返回小说列表，点开阅读正文。需配置 MACCMS_BASE（默认 https://zfxdrshm.top:2549）。', tag: '中文', adult: true, tier: 'plus' }
 ]
 
 export const SIMPLE_NOVEL_GROUPS = [
