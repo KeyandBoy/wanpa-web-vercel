@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { isLocal } from '../api'
 import {
@@ -196,6 +196,10 @@ async function cPreviewComic(item) {
     ElMessage.error(`预览失败: ${e.message}`)
   } finally {
     cPreviewLoading.value = false
+    if (window.innerWidth <= 991) {
+      await nextTick()
+      document.querySelector('.player-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
   }
 }
 
@@ -563,6 +567,10 @@ async function nRead(item) {
     ElMessage.error(`阅读失败: ${e.message}`)
   } finally {
     nContentLoading.value = false
+    if (window.innerWidth <= 991) {
+      await nextTick()
+      document.querySelector('.player-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
   }
 }
 
@@ -1724,23 +1732,18 @@ onBeforeUnmount(() => {
     width: 100%;
   }
   .player-card {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    margin: 0;
-    border-radius: 0;
+    position: static;
+    z-index: auto;
+    margin: 12px 0 0;
+    border-radius: 8px;
     background: var(--card);
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    overflow: visible;
   }
   .player-card .el-card__body {
-    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    padding-bottom: 20px;
   }
   .player-card .el-card__header {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    background: var(--card);
+    position: static;
   }
   .mobile-nav {
     display: flex;
