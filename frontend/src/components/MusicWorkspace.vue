@@ -14,8 +14,10 @@ const loadingMore = ref(false)
 const page = ref(1)
 const audio = ref(null)
 const playingId = ref('')
+const selected = ref(new Set())
 
 const downloadable = computed(() => items.value.filter((item) => item.download_candidates?.length))
+const selectedItems = computed(() => items.value.filter((item) => selected.value.has(itemKey(item))))
 
 function itemKey(item) { return `${item.source}:${item.id}` }
 function artistText(item) { return (item.artists || []).join(', ') || '未知音乐人' }
@@ -35,6 +37,18 @@ function candidateFilename(item, c) {
   const safe = (item.title || 'music').replace(/[^\w\u4e00-\u9fff -]/g, '_').slice(0, 80)
   return `${safe}.${ext}`
 }
+function toggleSelected(item) {
+  if (!item.download_candidates?.length) return
+  const next = new Set(selected.value)
+  if (next.has(itemKey(item))) next.delete(itemKey(item))
+  else next.add(itemKey(item))
+  selected.value = next
+}
+function selectAll() { selected.value = new Set(downloadable.value.map(itemKey)) }
+function clearSelection() { selected.value = new Set() }
+async function downloadSelected() {
+  for (const item of selectedItems.value) downloadItem(item, item.download_candidates[0])
+}
 async function loadSources() {
   try { sources.value = await api.musicSources() } catch (e) { ElMessage.warning(e.message) }
 }
@@ -50,6 +64,7 @@ async function search(append = false) {
       items.value = [...map.values()]
     } else {
       stopPreview(); items.value = incoming
+      clearSelection()
     }
     page.value = np
     if (!append && !incoming.length) ElMessage.info('没有找到结果')
@@ -79,6 +94,9 @@ function downloadItem(item, candidate) {
 function openLink(url) {
   if (/^https?:\/\//i.test(url || '')) window.open(url, '_blank', 'noopener,noreferrer')
 }
+function browserSearch() {
+  if (keyword.value.trim()) window.open(`https://www.google.com/search?q=${encodeURIComponent(keyword.value.trim() + ' music')}`, '_blank', 'noopener,noreferrer')
+}
 watch(() => props.active, (a) => { if (!a && audio.value && !audio.value.paused) audio.value.pause() })
 onMounted(loadSources)
 </script>
@@ -99,6 +117,7 @@ onMounted(loadSources)
           <template #prefix><el-icon><Headset /></el-icon></template>
         </el-input>
         <el-button type="primary" size="large" :loading="loading" @click="search(false)">搜索</el-button>
+        <el-button size="large" @click="browserSearch"><el-icon><Compass /></el-icon> 浏览器搜索</el-button>
       </div>
       <div class="control-line">
         <el-select v-model="selectedSource" aria-label="音乐源">
@@ -118,10 +137,17 @@ onMounted(loadSources)
     </div>
     <div v-if="items.length" class="batch-bar">
       <div><strong>{{ items.length }}</strong> 条结果 · <strong>{{ downloadable.length }}</strong> 条允许下载</div>
+      <div class="batch-actions">
+        <el-button text @click="selectAll">全选可下载</el-button>
+        <el-button text @click="clearSelection">清空</el-button>
+        <el-button type="success" :disabled="!selectedItems.length" @click="downloadSelected">下载已选 {{ selectedItems.length }}</el-button>
+      </div>
     </div>
     <div v-loading="loading" class="track-list">
       <article v-for="(item, index) in items" :key="itemKey(item)" class="track">
-        <span class="idx">{{ String(index + 1).padStart(2, '0') }}</span>
+        <button class="select-box" type="button" :disabled="!item.download_candidates?.length" @click="toggleSelected(item)">
+          <el-icon v-if="selected.has(itemKey(item))"><Check /></el-icon><span v-else>{{ String(index + 1).padStart(2, '0') }}</span>
+        </button>
         <div class="cover">
           <img v-if="item.cover_url" :src="item.cover_url" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" />
           <el-icon v-else><Headset /></el-icon>
@@ -161,38 +187,41 @@ onMounted(loadSources)
 </template>
 
 <style scoped>
-.music-space { max-width: 1200px; margin: 0 auto; color: var(--text); }
-.music-hero { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 160px; overflow: hidden; padding: 26px 32px; border-radius: 18px 18px 0 0; color: #f8fafc; background: radial-gradient(circle at 72% 20%, rgba(45,212,191,.24), transparent 30%), linear-gradient(125deg, #111827, #172554 55%, #134e4a); }
+.music-space { max-width: 1400px; margin: 0 auto; color: var(--text); }
+.music-hero { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 170px; overflow: hidden; padding: 28px 38px; border-radius: 22px 22px 0 0; color: #f8fafc; background: radial-gradient(circle at 72% 20%, rgba(45,212,191,.24), transparent 30%), linear-gradient(125deg, #111827, #172554 55%, #134e4a); }
 .music-hero::before { content: ''; position: absolute; inset: 0; opacity: .18; background: repeating-linear-gradient(90deg, transparent 0 34px, rgba(255,255,255,.08) 35px 36px); }
 .music-hero > div { position: relative; z-index: 1; }
 .eyebrow { color: #5eead4; font: 700 11px ui-monospace, monospace; letter-spacing: .22em; }
-.music-hero h1 { margin: 8px 0 6px; font: 800 32px/1.1 'Arial Narrow', 'Microsoft YaHei', sans-serif; letter-spacing: .04em; }
-.music-hero p { max-width: 600px; margin: 0; color: #cbd5e1; font-size: 13px; }
-.hero-disc { display: grid; width: 100px; height: 100px; place-items: center; border-radius: 50%; background: repeating-radial-gradient(circle, #111827 0 4px, #334155 5px 7px); box-shadow: 0 16px 35px rgba(0,0,0,.4); animation: spin 12s linear infinite; }
-.hero-disc span { width: 32px; height: 32px; border: 7px solid #fb7185; border-radius: 50%; background: #f8fafc; }
+.music-hero h1 { margin: 8px 0 7px; font: 800 35px/1.1 'Arial Narrow', 'Microsoft YaHei', sans-serif; letter-spacing: .04em; }
+.music-hero p { max-width: 700px; margin: 0; color: #cbd5e1; font-size: 13px; }
+.hero-disc { display: grid; width: 112px; height: 112px; place-items: center; border-radius: 50%; background: repeating-radial-gradient(circle, #111827 0 4px, #334155 5px 7px); box-shadow: 0 16px 35px rgba(0,0,0,.4); animation: spin 12s linear infinite; }
+.hero-disc span { width: 35px; height: 35px; border: 8px solid #fb7185; border-radius: 50%; background: #f8fafc; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.console { padding: 18px 22px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 16px 16px; background: var(--card); box-shadow: 0 12px 28px rgba(15,23,42,.08); }
-.search-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.console { padding: 20px 24px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 18px 18px; background: var(--card); box-shadow: 0 14px 30px rgba(15,23,42,.08); }
+.search-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; }
 .control-line { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .control-line .el-select { width: 220px; }
 .source-note { margin-left: auto; color: var(--text-sub); font: 11px ui-monospace, monospace; }
-.now-playing { display: grid; grid-template-columns: 48px minmax(140px, 1fr) minmax(280px, 500px); align-items: center; gap: 12px; margin: 16px 0; padding: 11px 16px; border: 1px solid #1e293b; border-radius: 12px; color: #e2e8f0; background: #0f172a; }
+.now-playing { display: grid; grid-template-columns: 52px minmax(150px, 1fr) minmax(300px, 520px); align-items: center; gap: 14px; margin: 18px 0; padding: 12px 18px; border: 1px solid #1e293b; border-radius: 14px; color: #e2e8f0; background: #0f172a; }
 .now-playing > div:nth-child(2) { display: grid; min-width: 0; }
 .now-playing b, .now-playing span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-playing span { color: #94a3b8; font-size: 12px; }
-.now-playing audio { width: 100%; height: 34px; }
-.pulse { display: flex; align-items: end; justify-content: center; gap: 3px; height: 24px; }
+.now-playing audio { width: 100%; height: 36px; }
+.pulse { display: flex; align-items: end; justify-content: center; gap: 3px; height: 26px; }
 .pulse i { width: 4px; height: 7px; border-radius: 4px; background: #2dd4bf; }
 .pulse.active i { animation: level .8s ease-in-out infinite alternate; }
 .pulse.active i:nth-child(2) { animation-delay: -.4s; height: 18px; }
 .pulse.active i:nth-child(3) { animation-delay: -.2s; height: 13px; }
 @keyframes level { to { height: 23px; } }
 .batch-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: var(--text-sub); font-size: 13px; }
+.batch-actions { display: flex; align-items: center; }
 .track-list { min-height: 300px; }
-.track { display: grid; grid-template-columns: 38px 68px minmax(0, 1fr) 82px 160px; align-items: center; gap: 12px; margin-bottom: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 13px; background: var(--card); transition: border-color .2s, transform .2s, box-shadow .2s; }
+.track { display: grid; grid-template-columns: 42px 74px minmax(0, 1fr) 90px 180px; align-items: center; gap: 13px; margin-bottom: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 13px; background: var(--card); transition: border-color .2s, transform .2s, box-shadow .2s; }
 .track:hover { transform: translateY(-1px); border-color: #5eead4; box-shadow: 0 9px 22px rgba(15,23,42,.08); }
-.idx { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: var(--text-sub); background: var(--card-soft); font: 700 11px ui-monospace, monospace; }
-.cover { position: relative; display: grid; width: 62px; height: 62px; place-items: center; overflow: hidden; border-radius: 10px; color: #5eead4; background: linear-gradient(135deg, #1e293b, #134e4a); font-size: 24px; }
+.track:has(.select-box:focus) { border-color: #14b8a6; background: color-mix(in srgb, var(--card) 94%, #14b8a6); }
+.select-box { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--border); border-radius: 50%; color: var(--text-sub); background: var(--card-soft); cursor: pointer; font: 700 11px ui-monospace, monospace; }
+.select-box:disabled { cursor: not-allowed; opacity: .35; }
+.cover { position: relative; display: grid; width: 68px; height: 68px; place-items: center; overflow: hidden; border-radius: 11px; color: #5eead4; background: linear-gradient(135deg, #1e293b, #134e4a); font-size: 26px; }
 .cover img { width: 100%; height: 100%; object-fit: cover; }
 .play { position: absolute; display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 50%; color: #fff; background: rgba(15,23,42,.78); cursor: pointer; opacity: 0; transition: opacity .2s; }
 .cover:hover .play, .track:hover .play { opacity: 1; }

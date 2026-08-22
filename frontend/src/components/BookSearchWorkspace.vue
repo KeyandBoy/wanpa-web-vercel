@@ -17,6 +17,12 @@ const items = ref([])
 const sources = ref([])
 const sourceErrors = ref({})
 const sourceStats = ref({})
+const externalSources = [
+  { name: 'Google Books', note: '正版书目与预览', url: 'https://books.google.com/' },
+  { name: 'Open Library', note: '开放图书馆目录', url: 'https://openlibrary.org/' },
+  { name: 'Internet Archive', note: '开放文件与借阅', url: 'https://archive.org/' },
+  { name: 'Project Gutenberg', note: '公版电子书', url: 'https://www.gutenberg.org/' },
+]
 const accessMeta = {
   open_access: { label: '开放访问', type: 'success' },
   borrow: { label: '在线借阅', type: 'warning' },
@@ -248,6 +254,19 @@ onMounted(loadSources)
         <el-button :loading="loadingMore" @click="runSearch(true)">加载更多结果</el-button>
       </div>
     </div>
+    <section class="external-shelf">
+      <div class="external-head">
+        <div><span class="eyebrow">BROWSER SOURCES</span><h2>正版与外部书库</h2></div>
+        <p>这些站点只在默认浏览器中打开，不绕过登录、验证、付费或下载限制。</p>
+      </div>
+      <div class="external-grid">
+        <button v-for="source in externalSources" :key="source.name" type="button" @click="openExternal(source.url)">
+          <el-icon><Link /></el-icon>
+          <span><b>{{ source.name }}</b><small>{{ source.note }}</small></span>
+          <el-icon><TopRight /></el-icon>
+        </button>
+      </div>
+    </section>
   </section>
 </template>
 

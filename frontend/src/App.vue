@@ -1,24 +1,15 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import CrawlWorkspace from './components/CrawlWorkspace.vue'
 import MusicWorkspace from './components/MusicWorkspace.vue'
 import BookSearchWorkspace from './components/BookSearchWorkspace.vue'
-import VersionDialog from './components/VersionDialog.vue'
-import { initLicense, license } from './license'
+import { initLicense } from './license'
 
 const isDark = ref(false)
-const showVersion = ref(false)
-const guideOpen = ref(true)
 const workspace = ref('image')
-const workspaceTabs = [
-  { label: '图片', value: 'image', icon: 'Picture' },
-  { label: '音乐', value: 'music', icon: 'Headset' },
-  { label: '小说', value: 'novel', icon: 'Notebook' },
-  { label: '漫画', value: 'comic', icon: 'Film' },
-  { label: '教材', value: 'books', icon: 'Reading' },
-]
-
-const versionLabel = computed(() => (license.version === 'plus' ? 'Plus' : 'Lite'))
+const contentWorkspace = ref('image')
+const APP_VERSION = '1.0.0'
+const APP_AUTHOR = 'KeyandBoy'
 
 function toggleTheme() {
   isDark.value = !isDark.value
@@ -28,10 +19,22 @@ function toggleTheme() {
   } catch (e) {}
 }
 
+function switchWorkspace(value) {
+  workspace.value = value
+  if (!['books', 'music'].includes(value)) contentWorkspace.value = value
+  try {
+    localStorage.setItem('wanpa-workspace', value)
+  } catch (e) {}
+}
+
 onMounted(() => {
   initLicense()
   isDark.value = document.documentElement.getAttribute('data-theme') === 'dark'
-  guideOpen.value = window.innerWidth >= 992
+  try {
+    const saved = localStorage.getItem('wanpa-workspace') || 'image'
+    workspace.value = ['image', 'music', 'novel', 'comic', 'books'].includes(saved) ? saved : 'image'
+    contentWorkspace.value = ['books', 'music'].includes(workspace.value) ? 'image' : workspace.value
+  } catch (e) {}
 })
 </script>
 
@@ -65,15 +68,11 @@ onMounted(() => {
             />
           </svg>
           <h2 class="brand-title">万爬网</h2>
-          <span class="sub">图片 / 小说 / 漫画 多源批量爬取</span>
-        </div>
-        <div class="head-actions">
-          <button class="version-btn" type="button" @click="showVersion = true">
-            <span class="version-dot" :class="versionLabel.toLowerCase()"></span>
-            {{ versionLabel }}
-            <span class="version-caret">切换</span>
-          </button>
-          <el-tooltip :content="isDark ? '切换到浅色' : '切换到暗色'" placement="bottom" effect="light">
+          <span class="sub">多源资源爬取与教材检索</span>
+          <span class="author-tag" title="本软件受自定义授权保护，仅供自用，禁止商用与二次分发">v{{ APP_VERSION }} · {{ APP_AUTHOR }}</span>
+          </div>
+          <div class="header-actions">
+           <el-tooltip :content="isDark ? '切换到浅色' : '切换到暗色'" placement="bottom" effect="light">
             <button class="theme-btn" type="button" @click="toggleTheme" :aria-label="isDark ? '切换到浅色' : '切换到暗色'">
               <el-icon v-if="isDark" :size="20"><Sunny /></el-icon>
               <el-icon v-else :size="20"><Moon /></el-icon>
@@ -82,34 +81,28 @@ onMounted(() => {
         </div>
       </el-header>
       <el-main class="main">
-        <el-alert class="guide" type="error" :closable="false">
-          <template #title>
-            <button class="guide-toggle" type="button" @click="guideOpen = !guideOpen">
-              <span>使用指南与注意事项</span>
-              <span class="guide-caret" :class="{ open: guideOpen }">▾</span>
-            </button>
-          </template>
-          <div v-show="guideOpen" class="guide-body">
-            <p><b>使用指南：</b>切换「图片 / 音乐 / 小说 / 漫画 / 教材」模式，输入关键词并勾选数据源（Lite 版使用免费国内源；Plus 版解锁海外图库、漫画、AI 摘要等全部功能，点击右上角版本按钮可开通）。可添加「多层筛选」规则，对搜索结果逐层过滤（层间取交集，层内关键词取并集）；小说支持阅读与 AI 摘要，完成后可打包 ZIP 下载。更多操作请见右侧各区域提示。</p>
-            <p><b>禁止事项：</b>请仅将本工具用于合法、个人学习用途，遵守目标网站的使用条款与 robots 协议，尊重版权，严禁用于任何违反法律法规的行为。</p>
-            <p><b>注意：</b>请合理控制并发与数量，避免对目标站点造成压力；本站仅提供技术演示，使用者需自行承担相关责任。</p>
-          </div>
-        </el-alert>
-        <div class="workspace-tabs">
-          <button
-            v-for="tab in workspaceTabs"
-            :key="tab.value"
-            class="ws-tab"
-            :class="{ active: workspace === tab.value }"
-            @click="workspace = tab.value"
-          >{{ tab.label }}</button>
-        </div>
-        <CrawlWorkspace v-if="workspace === 'image' || workspace === 'novel' || workspace === 'comic'" :mode="workspace" />
-        <MusicWorkspace v-else-if="workspace === 'music'" :active="workspace === 'music'" />
-        <BookSearchWorkspace v-else-if="workspace === 'books'" />
+        <nav class="workspace-nav" aria-label="工作区切换">
+          <button :class="{ active: workspace === 'image' }" type="button" @click="switchWorkspace('image')">
+            <el-icon><Picture /></el-icon>图片
+          </button>
+          <button :class="{ active: workspace === 'music' }" type="button" @click="switchWorkspace('music')">
+            <el-icon><Headset /></el-icon>音乐
+          </button>
+          <button :class="{ active: workspace === 'novel' }" type="button" @click="switchWorkspace('novel')">
+            <el-icon><Notebook /></el-icon>小说
+          </button>
+          <button :class="{ active: workspace === 'comic' }" type="button" @click="switchWorkspace('comic')">
+            <el-icon><Postcard /></el-icon>漫画
+          </button>
+          <button :class="{ active: workspace === 'books' }" type="button" @click="switchWorkspace('books')">
+            <el-icon><Reading /></el-icon>教材与电子书
+          </button>
+        </nav>
+        <CrawlWorkspace v-show="!['books', 'music'].includes(workspace)" :mode="contentWorkspace" :active="!['books', 'music'].includes(workspace)" />
+        <MusicWorkspace v-show="workspace === 'music'" :active="workspace === 'music'" />
+        <BookSearchWorkspace v-show="workspace === 'books'" />
       </el-main>
     </el-container>
-    <VersionDialog v-model="showVersion" />
   </div>
 </template>
 
@@ -251,36 +244,12 @@ onMounted(() => {
   color: #f56c6c;
 }
 
-.workspace-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 14px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--card);
-}
-.ws-tab {
-  flex: 1;
-  padding: 8px 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-sub);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-.ws-tab:hover {
-  color: var(--text);
-  background: var(--card-soft);
-}
-.ws-tab.active {
-  color: #fff;
-  background: var(--brand);
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
-}
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.author-tag { flex-shrink: 0; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-sub); font-size: 11px; opacity: .75; white-space: nowrap; }
+.workspace-nav { display: flex; width: fit-content; gap: 4px; margin: 0 auto 18px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); box-shadow: 0 4px 16px rgba(15,23,42,.06); }
+.workspace-nav button { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border: 0; border-radius: 8px; color: var(--text-sub); background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; transition: all .2s ease; }
+.workspace-nav button:hover { color: #2563eb; background: var(--card-soft); }
+.workspace-nav button.active { color: #fff; background: linear-gradient(135deg, #2563eb, #0f766e); box-shadow: 0 4px 12px rgba(37,99,235,.25); }
 
 @media (max-width: 991px) {
   .header {
@@ -295,7 +264,7 @@ onMounted(() => {
     font-size: 18px;
     letter-spacing: 0.5px;
   }
-  .sub {
+  .sub, .author-tag {
     display: none;
   }
   .main {
@@ -315,6 +284,11 @@ onMounted(() => {
     width: 34px;
     height: 34px;
   }
+}
+
+@media (max-width: 720px) {
+  .workspace-nav { width: 100%; overflow-x: auto; justify-content: flex-start; }
+  .workspace-nav button { flex: 0 0 auto; justify-content: center; padding-inline: 8px; }
 }
 
 </style>
