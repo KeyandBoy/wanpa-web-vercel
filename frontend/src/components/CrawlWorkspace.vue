@@ -22,6 +22,8 @@ import MultiLayerFilter from './MultiLayerFilter.vue'
 import { api } from '../api'
 import { license } from '../license'
 
+const props = defineProps({ mode: { type: String, default: 'image' } })
+
 const isPlus = computed(() => license.version === 'plus')
 
 const form = reactive({
@@ -36,13 +38,9 @@ const form = reactive({
   layers: []
 })
 
-const mode = ref('image')
+const mode = computed(() => props.mode)
 const viewMode = ref('detail')
-const navTabs = [
-  { label: '图片', value: 'image' },
-  { label: '小说', value: 'novel' },
-  { label: '漫画', value: 'comic' },
-]
+const navTabs = []
 const leftWidth = ref(420)
 const cform = reactive({
   keyword: '',
@@ -440,11 +438,9 @@ function toggleGroup(g, sites, setSites) {
 
 function onModeChange(v) {
   if (v === 'comic' && !isPlus.value) {
-    mode.value = 'image'
     ElMessage.warning('漫画板块为 Plus 专属，请点击右上角「Lite」开通')
     return
   }
-  mode.value = v
 }
 
 // ---- 版本分流 ----
@@ -1054,7 +1050,10 @@ onBeforeUnmount(() => {
                 @click="cPreviewComic(it)"
               >
                 <img v-if="it.cover" class="comic-cover" :src="it.cover" alt="" loading="lazy" />
-                <span class="novel-res-title" :title="it.title">{{ it.title }}</span>
+                <span class="novel-res-title" :title="(it.title_zh && it.title_zh !== it.title) ? it.title_zh + ' (' + it.title + ')' : it.title">
+                  {{ it.title_zh || it.title }}
+                  <span v-if="it.title_zh && it.title_zh !== it.title" class="res-title-orig">{{ it.title }}</span>
+                </span>
                 <el-tag size="small" type="info" effect="plain">{{ it.source }}</el-tag>
                 <el-tag v-if="it.is_cn" size="small" type="success" effect="plain">汉化</el-tag>
               </div>
@@ -1224,19 +1223,6 @@ onBeforeUnmount(() => {
       </el-card>
     </div>
   </div>
-
-  <div class="mobile-nav">
-    <button
-      v-for="t in navTabs"
-      :key="t.value"
-      class="mobile-nav-item"
-      :class="{ active: mode === t.value }"
-      type="button"
-      @click="onModeChange(t.value)"
-    >
-      {{ t.label }}
-    </button>
-  </div>
 </template>
 
 <style scoped>
@@ -1322,6 +1308,18 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
+}
+.res-title-orig {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-sub);
+  opacity: 0.65;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  vertical-align: baseline;
 }
 .comic-res-item {
   gap: 8px;

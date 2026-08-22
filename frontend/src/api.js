@@ -90,6 +90,42 @@ export const api = {
       if (!r.ok) throw new Error((await r.json()).error || '目录获取失败')
       return r.json()
     }),
+  musicSources: () =>
+    fetch('/api/music-sources').then(async (r) => {
+      if (!r.ok) throw new Error('音乐源获取失败')
+      return r.json()
+    }),
+  musicSearch: (params) => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 60000)
+    return fetch(`/api/music-search?${qs(params)}`, { signal: ctrl.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).error || '音乐搜索失败')
+        return r.json()
+      })
+      .finally(() => clearTimeout(timer))
+  },
+  musicPreviewUrl: (url) => `/api/music-preview?url=${encodeURIComponent(url)}`,
+  musicDownloadUrl: (url, filename) =>
+    `/api/music-download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename || 'music')}`,
+  fileProxyUrl: (url) => `/api/file-proxy?url=${encodeURIComponent(url)}`,
+  bookSources: () =>
+    fetch('/api/book-sources').then(async (r) => {
+      if (!r.ok) throw new Error('书源获取失败')
+      return r.json()
+    }),
+  bookSearch: (params) => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 90000)
+    return fetch(`/api/book-search?${qs(params)}`, { signal: ctrl.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).error || '教材搜索失败')
+        return r.json()
+      })
+      .finally(() => clearTimeout(timer))
+  },
+  bookDownloadUrl: (url, filename, format) =>
+    `/api/book-download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename || 'download')}&format=${encodeURIComponent(format || '')}`,
   dsSummarize: (text) =>
     fetch('/api/ds-summarize', {
       method: 'POST',

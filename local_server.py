@@ -28,6 +28,14 @@ ROUTES = {
     "ds-summarize": "ds-summarize",
     "ds-filter": "ds-filter",
     "ds-clean": "ds-clean",
+    "music-sources": "music-sources",
+    "music-search": "music-search",
+    "music-preview": "music-preview",
+    "music-download": "music-download",
+    "book-sources": "book-sources",
+    "book-search": "book-search",
+    "book-download": "book-download",
+    "file-proxy": "file-proxy",
 }
 
 MIME = {

@@ -1,12 +1,22 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import CrawlWorkspace from './components/CrawlWorkspace.vue'
+import MusicWorkspace from './components/MusicWorkspace.vue'
+import BookSearchWorkspace from './components/BookSearchWorkspace.vue'
 import VersionDialog from './components/VersionDialog.vue'
 import { initLicense, license } from './license'
 
 const isDark = ref(false)
 const showVersion = ref(false)
 const guideOpen = ref(true)
+const workspace = ref('image')
+const workspaceTabs = [
+  { label: '图片', value: 'image', icon: 'Picture' },
+  { label: '音乐', value: 'music', icon: 'Headset' },
+  { label: '小说', value: 'novel', icon: 'Notebook' },
+  { label: '漫画', value: 'comic', icon: 'Film' },
+  { label: '教材', value: 'books', icon: 'Reading' },
+]
 
 const versionLabel = computed(() => (license.version === 'plus' ? 'Plus' : 'Lite'))
 
@@ -80,12 +90,23 @@ onMounted(() => {
             </button>
           </template>
           <div v-show="guideOpen" class="guide-body">
-            <p><b>使用指南：</b>切换「图片 / 小说 / 漫画」模式，输入关键词并勾选数据源（Lite 版使用免费国内源；Plus 版解锁海外图库、漫画、AI 摘要等全部功能，点击右上角版本按钮可开通）。可添加「多层筛选」规则，对搜索结果逐层过滤（层间取交集，层内关键词取并集）；小说支持阅读与 AI 摘要，完成后可打包 ZIP 下载。更多操作请见右侧各区域提示。</p>
+            <p><b>使用指南：</b>切换「图片 / 音乐 / 小说 / 漫画 / 教材」模式，输入关键词并勾选数据源（Lite 版使用免费国内源；Plus 版解锁海外图库、漫画、AI 摘要等全部功能，点击右上角版本按钮可开通）。可添加「多层筛选」规则，对搜索结果逐层过滤（层间取交集，层内关键词取并集）；小说支持阅读与 AI 摘要，完成后可打包 ZIP 下载。更多操作请见右侧各区域提示。</p>
             <p><b>禁止事项：</b>请仅将本工具用于合法、个人学习用途，遵守目标网站的使用条款与 robots 协议，尊重版权，严禁用于任何违反法律法规的行为。</p>
             <p><b>注意：</b>请合理控制并发与数量，避免对目标站点造成压力；本站仅提供技术演示，使用者需自行承担相关责任。</p>
           </div>
         </el-alert>
-        <CrawlWorkspace />
+        <div class="workspace-tabs">
+          <button
+            v-for="tab in workspaceTabs"
+            :key="tab.value"
+            class="ws-tab"
+            :class="{ active: workspace === tab.value }"
+            @click="workspace = tab.value"
+          >{{ tab.label }}</button>
+        </div>
+        <CrawlWorkspace v-if="workspace === 'image' || workspace === 'novel' || workspace === 'comic'" :mode="workspace" />
+        <MusicWorkspace v-else-if="workspace === 'music'" :active="workspace === 'music'" />
+        <BookSearchWorkspace v-else-if="workspace === 'books'" />
       </el-main>
     </el-container>
     <VersionDialog v-model="showVersion" />
@@ -228,6 +249,37 @@ onMounted(() => {
 .guide-body p {
   margin: 4px 0;
   color: #f56c6c;
+}
+
+.workspace-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.ws-tab {
+  flex: 1;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-sub);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.ws-tab:hover {
+  color: var(--text);
+  background: var(--card-soft);
+}
+.ws-tab.active {
+  color: #fff;
+  background: var(--brand);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
 }
 
 @media (max-width: 991px) {
