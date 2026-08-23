@@ -783,6 +783,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="workspace">
+    <header class="crawl-hero">
+      <div>
+        <span class="eyebrow">MULTI-SOURCE RESOURCE FINDER</span>
+        <h1>{{ mode === 'image' ? '图片资源' : mode === 'novel' ? '小说资源' : '漫画资源' }}</h1>
+        <p>{{ mode === 'image' ? '跨多个图片来源检索、筛选并批量保存资源。' : mode === 'novel' ? '检索小说内容，在线阅读并保存个人学习资料。' : '检索漫画作品，预览页面并保存开放内容。' }}</p>
+      </div>
+      <div class="hero-mark"><span>{{ mode === 'image' ? 'IMG' : mode === 'novel' ? 'TXT' : 'COMIC' }}</span></div>
+    </header>
     <div class="left" :style="{ width: leftWidth + 'px' }">
       <el-card shadow="never">
         <template #header>
@@ -792,11 +800,6 @@ onBeforeUnmount(() => {
               <el-radio-group v-model="viewMode" size="small">
                 <el-radio-button value="detail">详细</el-radio-button>
                 <el-radio-button value="simple">简单</el-radio-button>
-              </el-radio-group>
-              <el-radio-group v-model="mode" size="small" @change="onModeChange">
-                <el-radio-button value="image">图片</el-radio-button>
-                <el-radio-button value="novel">小说</el-radio-button>
-                <el-radio-button value="comic">漫画</el-radio-button>
               </el-radio-group>
             </span>
           </div>
@@ -1800,6 +1803,57 @@ onBeforeUnmount(() => {
   .comic-wall {
     grid-template-columns: repeat(2, 1fr) !important;
   }
+}
+
+/* Match the textbook workspace rhythm: hero, search deck, then result cards. */
+.workspace {
+  display: block;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+.crawl-hero {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-height: 170px;
+  overflow: hidden;
+  padding: 30px 34px;
+  border-radius: 18px 18px 0 0;
+  color: #eff6ff;
+  background: radial-gradient(circle at 80% 10%, rgba(56, 189, 248, .3), transparent 28%), linear-gradient(125deg, #172554 0%, #1e3a8a 54%, #0f766e 120%);
+}
+.crawl-hero::after {
+  content: '';
+  position: absolute;
+  right: 18%;
+  bottom: -65px;
+  width: 180px;
+  height: 180px;
+  border: 1px solid rgba(255,255,255,.15);
+  transform: rotate(24deg);
+}
+.crawl-hero > div { position: relative; z-index: 1; }
+.crawl-hero .eyebrow { color: #7dd3fc; font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .2em; }
+.crawl-hero h1 { margin: 8px 0 5px; font: 700 34px/1.15 Georgia, 'Noto Serif SC', serif; letter-spacing: .04em; }
+.crawl-hero p { max-width: 700px; margin: 0; color: #bfdbfe; font-size: 14px; }
+.hero-mark { display: grid; width: 112px; height: 112px; place-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 18px; color: #bae6fd; background: rgba(15,23,42,.18); font: 700 18px ui-monospace, monospace; letter-spacing: .12em; transform: rotate(8deg); }
+.left { width: 100% !important; }
+.left-handle { display: none; }
+.left > .el-card { border-top: 0; border-radius: 0 0 18px 18px; box-shadow: 0 14px 30px rgba(15,23,42,.08) !important; }
+.right { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
+.right > .el-card { min-width: 0; border-radius: 14px; }
+.card-head { font-weight: 600; }
+.player-card { min-width: 0; }
+
+@media (max-width: 900px) {
+  .right { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .crawl-hero { min-height: 145px; padding: 24px 20px; }
+  .crawl-hero h1 { font-size: 28px; }
+  .hero-mark { display: none; }
+  .right { margin-top: 16px; }
 }
 
 </style>
