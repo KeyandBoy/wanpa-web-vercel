@@ -32,12 +32,21 @@ def _proxies():
     return {"http": proxy, "https": proxy} if proxy else None
 
 
-def _get_json(url, params=None):
-    response = requests.get(url, params=params, headers=_HEADERS, proxies=_proxies(), timeout=_TIMEOUT)
-    if response.status_code == 429:
-        raise RuntimeError("远程书源请求过于频繁 (HTTP 429), 请稍后重试并减少连续搜索")
-    response.raise_for_status()
-    return response.json()
+def _get_json(url, params=None, retries=2):
+    last_err = None
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, params=params, headers=_HEADERS, proxies=_proxies(), timeout=_TIMEOUT)
+            if response.status_code == 429:
+                raise RuntimeError("远程书源请求过于频繁 (HTTP 429), 请稍后重试并减少连续搜索")
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                import time
+                time.sleep(1)
+    raise last_err
 
 
 def _clean_list(value):

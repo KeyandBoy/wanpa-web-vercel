@@ -164,7 +164,7 @@ def api_search(keyword, source, page, count=20):
         items = search_duitang_page(keyword, page)
         has_more = bool(items)
     elif source == "pexels":
-        items = search_pexels_page(keyword, max(page - 1, 0))
+        items = search_pexels_page(keyword, max(page - 1, 0), api_key=os.environ.get("PEXELS_KEY", ""))
         has_more = bool(items)
     elif source == "giphy":
         items = search_giphy_page(keyword, page)
@@ -285,9 +285,34 @@ def ok_json(payload):
     }
 
 
-def err_json(status, msg):
-    body = json.dumps({"error": msg}, ensure_ascii=False).encode("utf-8")
+def err_json(status, msg, error_type=None):
+    payload = {"error": msg}
+    if error_type:
+        payload["error_type"] = error_type
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     return body, {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": str(len(body)),
     }, status
+
+
+def classify_error(e):
+    """将异常分类为 error_type"""
+    msg = str(e).lower()
+    if "timeout" in msg or "timed out" in msg:
+        return "timeout"
+    if "connection" in msg and ("refused" in msg or "reset" in msg or "abort" in msg):
+        return "connection_error"
+    if "connection" in msg and ("closed" in msg or "eof" in msg):
+        return "connection_closed"
+    if "403" in msg or "forbidden" in msg or "block" in msg:
+        return "source_blocked"
+    if "ssl" in msg or "tls" in msg:
+        return "ssl_error"
+    if "dns" in msg or "resolve" in msg:
+        return "dns_error"
+    if "json" in msg or "parse" in msg or "decode" in msg:
+        return "parse_error"
+    if "not found" in msg or "404" in msg:
+        return "not_found"
+    return "unknown"

@@ -44,32 +44,50 @@ def _session():
     return s
 
 
-def _get(url, params=None, session=None):
-    if session:
-        r = session.get(url, params=params, timeout=25)
-    else:
-        proxies = None
-        p = _proxy()
-        if p:
-            proxies = {"http": p, "https": p}
-        r = cr.get(url, params=params, timeout=25, proxies=proxies, impersonate="chrome")
-    if r.status_code != 200:
-        raise ValueError(f"{url} 访问失败(HTTP {r.status_code})")
-    return r
+def _get(url, params=None, session=None, retries=2):
+    last_err = None
+    for attempt in range(retries):
+        try:
+            if session:
+                r = session.get(url, params=params, timeout=25)
+            else:
+                proxies = None
+                p = _proxy()
+                if p:
+                    proxies = {"http": p, "https": p}
+                r = cr.get(url, params=params, timeout=25, proxies=proxies, impersonate="chrome")
+            if r.status_code != 200:
+                raise ValueError(f"{url} 访问失败(HTTP {r.status_code})")
+            return r
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                import time
+                time.sleep(1)
+    raise last_err
 
 
-def _post(url, data=None, session=None):
-    if session:
-        r = session.post(url, data=data, timeout=25)
-    else:
-        proxies = None
-        p = _proxy()
-        if p:
-            proxies = {"http": p, "https": p}
-        r = cr.post(url, data=data, timeout=25, proxies=proxies, impersonate="chrome")
-    if r.status_code != 200:
-        raise ValueError(f"{url} 访问失败(HTTP {r.status_code})")
-    return r
+def _post(url, data=None, session=None, retries=2):
+    last_err = None
+    for attempt in range(retries):
+        try:
+            if session:
+                r = session.post(url, data=data, timeout=25)
+            else:
+                proxies = None
+                p = _proxy()
+                if p:
+                    proxies = {"http": p, "https": p}
+                r = cr.post(url, data=data, timeout=25, proxies=proxies, impersonate="chrome")
+            if r.status_code != 200:
+                raise ValueError(f"{url} 访问失败(HTTP {r.status_code})")
+            return r
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                import time
+                time.sleep(1)
+    raise last_err
 
 
 def _extract_text(html):
@@ -248,12 +266,18 @@ def _biquga_session():
 
 
 def _search_biquga(keyword, page=1, per_page=20):
+    s = _biquga_session()
     try:
-        r = _biquga_session().post(
+        r = s.post(
             "https://www.biquga.com/search.html", data={"s": keyword}, timeout=25
         )
     except Exception as e:
-        raise ValueError(f"笔趣阁 访问失败: {e}") from e
+        try:
+            r = s.post(
+                "https://www.biquga.com/search.html", data={"s": keyword}, timeout=25
+            )
+        except Exception as e2:
+            raise ValueError(f"笔趣阁 访问失败: {e2}") from e2
     if r.status_code != 200:
         raise ValueError(f"笔趣阁 访问失败(HTTP {r.status_code})")
     items = []

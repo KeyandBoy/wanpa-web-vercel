@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from _core import ok_json, err_json
+from _core import classify_error, ok_json, err_json
 
 
 class handler(BaseHTTPRequestHandler):
@@ -33,7 +33,8 @@ class handler(BaseHTTPRequestHandler):
                 status = 200
                 body = payload
             except Exception as e:
-                body, headers, status = err_json(500, str(e))
+                etype = classify_error(e)
+                body, headers, status = err_json(500, str(e), error_type=etype)
 
         self.send_response(status)
         for k, v in headers.items():

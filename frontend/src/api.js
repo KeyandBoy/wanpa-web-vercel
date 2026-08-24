@@ -2,6 +2,24 @@ import { currentToken } from './license'
 
 const qs = (p) => new URLSearchParams(p).toString()
 
+class ApiError extends Error {
+  constructor(msg, errorType) {
+    super(msg)
+    this.name = 'ApiError'
+    this.errorType = errorType || 'unknown'
+  }
+}
+
+async function throwApiError(r, fallback) {
+  try {
+    const body = await r.json()
+    throw new ApiError(body.error || fallback, body.error_type)
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    throw new ApiError(fallback, 'unknown')
+  }
+}
+
 export const isLocal = () =>
   ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname)
 
@@ -14,12 +32,12 @@ const tok = () => {
 export const api = {
   search: (params) =>
     fetch(`/api/search?${qs({ ...params, ...tok() })}`).then(async (r) => {
-      if (!r.ok) throw new Error((await r.json()).error || '搜索失败')
+      if (!r.ok) await throwApiError(r, '搜索失败')
       return r.json()
     }),
   pageImages: (url) =>
     fetch(`/api/page-images?url=${encodeURIComponent(url)}`).then(async (r) => {
-      if (!r.ok) throw new Error((await r.json()).error || '网页解析失败')
+      if (!r.ok) await throwApiError(r, '网页解析失败')
       return r.json()
     }),
   proxyUrl: (url) => `/api/proxy?url=${encodeURIComponent(url)}`,
@@ -67,7 +85,7 @@ export const api = {
     const timer = setTimeout(() => ctrl.abort(), 60000)
     return fetch(`/api/novel-search?${qs({ ...params, ...tok() })}`, { signal: ctrl.signal })
       .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json()).error || '小说搜索失败')
+        if (!r.ok) await throwApiError(r, '小说搜索失败')
         return r.json()
       })
       .finally(() => clearTimeout(timer))
@@ -80,19 +98,19 @@ export const api = {
       { signal: ctrl.signal }
     )
       .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json()).error || '内容获取失败')
+        if (!r.ok) await throwApiError(r, '内容获取失败')
         return r.json()
       })
       .finally(() => clearTimeout(timer))
   },
   novelChapters: (url) =>
     fetch(`/api/novel-chapters?url=${encodeURIComponent(url)}&${qs(tok())}`).then(async (r) => {
-      if (!r.ok) throw new Error((await r.json()).error || '目录获取失败')
+      if (!r.ok) await throwApiError(r, '目录获取失败')
       return r.json()
     }),
   musicSources: () =>
     fetch('/api/music-sources').then(async (r) => {
-      if (!r.ok) throw new Error('音乐源获取失败')
+      if (!r.ok) await throwApiError(r, '音乐源获取失败')
       return r.json()
     }),
   musicSearch: (params) => {
@@ -100,7 +118,7 @@ export const api = {
     const timer = setTimeout(() => ctrl.abort(), 60000)
     return fetch(`/api/music-search?${qs(params)}`, { signal: ctrl.signal })
       .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json()).error || '音乐搜索失败')
+        if (!r.ok) await throwApiError(r, '音乐搜索失败')
         return r.json()
       })
       .finally(() => clearTimeout(timer))
@@ -111,7 +129,7 @@ export const api = {
   fileProxyUrl: (url) => `/api/file-proxy?url=${encodeURIComponent(url)}`,
   bookSources: () =>
     fetch('/api/book-sources').then(async (r) => {
-      if (!r.ok) throw new Error('书源获取失败')
+      if (!r.ok) await throwApiError(r, '书源获取失败')
       return r.json()
     }),
   bookSearch: (params) => {
@@ -119,7 +137,7 @@ export const api = {
     const timer = setTimeout(() => ctrl.abort(), 90000)
     return fetch(`/api/book-search?${qs(params)}`, { signal: ctrl.signal })
       .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json()).error || '教材搜索失败')
+        if (!r.ok) await throwApiError(r, '教材搜索失败')
         return r.json()
       })
       .finally(() => clearTimeout(timer))

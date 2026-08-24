@@ -143,7 +143,9 @@ async function cSearch() {
           const r = await api.comicSearch({ keyword: cform.keyword.trim(), source: src, count: cform.count })
           return r.items || []
         } catch (e) {
-          pushComicLog(`${src} 搜索失败，已跳过: ${e.message}`)
+          const etype = e.errorType || ''
+          const typeLabel = etype === 'timeout' ? '(超时)' : etype === 'connection_error' ? '(连接失败)' : etype === 'source_blocked' ? '(源站拦截)' : etype === 'ssl_error' ? '(SSL错误)' : ''
+          pushComicLog(`${src} 搜索失败${typeLabel}，已跳过: ${e.message}`)
           return []
         }
       })
@@ -513,7 +515,9 @@ async function nSearch() {
           const r = await api.novelSearch({ keyword: nform.keyword.trim(), source: src, page: 1 })
           return r.items || []
         } catch (e) {
-          pushNovelLog(`${src} 搜索失败，已跳过: ${e.message}`)
+          const etype = e.errorType || ''
+          const typeLabel = etype === 'timeout' ? '(超时)' : etype === 'connection_error' ? '(连接失败)' : etype === 'source_blocked' ? '(源站拦截)' : etype === 'ssl_error' ? '(SSL错误)' : ''
+          pushNovelLog(`${src} 搜索失败${typeLabel}，已跳过: ${e.message}`)
           return []
         }
       })

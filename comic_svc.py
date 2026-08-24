@@ -139,21 +139,31 @@ def _proxy():
     return None
 
 
-def _get(url, params=None, referer=None):
+def _get(url, params=None, referer=None, retries=2):
     p = _proxy()
     proxies = {"http": p, "https": p} if p else None
-    s = cr.Session()
-    s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"})
-    if referer:
-        s.headers.update({"Referer": referer})
-    return s.get(
-        url,
-        params=params,
-        impersonate="chrome",
-        timeout=25,
-        proxies=proxies,
-        allow_redirects=True,
-    )
+    last_err = None
+    for attempt in range(retries):
+        try:
+            s = cr.Session()
+            s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"})
+            if referer:
+                s.headers.update({"Referer": referer})
+            r = s.get(
+                url,
+                params=params,
+                impersonate="chrome",
+                timeout=25,
+                proxies=proxies,
+                allow_redirects=True,
+            )
+            return r
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                import time
+                time.sleep(1)
+    raise last_err
 
 
 def _strip(html):

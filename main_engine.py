@@ -587,8 +587,30 @@ def search_duitang_page(keyword, page, per_page=20):
     return items
 
 
-def search_pexels_page(keyword, page, per_page=20):
-    """Pexels: 免版权摄影图库 HTML"""
+def search_pexels_page(keyword, page, per_page=20, api_key=""):
+    """Pexels: 免版权摄影图库 (优先 API，无 key 时 HTML 爬取)"""
+    if api_key:
+        try:
+            r = http_get(
+                "https://api.pexels.com/v1/search",
+                params={"query": keyword, "page": page, "per_page": per_page},
+                headers={**HEADERS, "Authorization": api_key},
+                retries=2,
+            )
+            data = r.json()
+            items = []
+            for photo in data.get("photos") or []:
+                url = photo.get("src") and photo["src"].get("large2x") or photo.get("src", {}).get("large", "")
+                if url:
+                    items.append({
+                        "url": url,
+                        "title": photo.get("alt") or keyword,
+                        "width": photo.get("width"),
+                        "height": photo.get("height"),
+                    })
+            return items
+        except Exception as e:
+            raise ValueError(f"Pexels API 访问失败: {e}") from e
     try:
         r = http_get(
             "https://www.pexels.com/search/" + quote(keyword) + "/",
@@ -780,18 +802,30 @@ def search_xiurenai_page(keyword, page, per_page=20):
         except Exception as e:
             raise ValueError(f"秀人网访问失败: {e}") from e
         detail_links = []
-        for m in re.finditer(r'<a[^>]+href="(https?://www\.xiurenai\.com/other/iess/\d+\.html)"[^>]*>\s*<img[^>]+src="(https?://xr\.afxfl\.com[^"]+)"', r.text):
-            detail_links.append(m.group(1))
+        for m in re.finditer(r'<a[^>]+href="(https?://www\.xiurenai\.com/[^"]*\d+\.html)"[^>]*>', r.text):
+            href = m.group(1)
+            if href not in detail_links:
+                detail_links.append(href)
+        if not detail_links:
+            for m in re.finditer(r'href="(https?://www\.xiurenai\.com/[^"]+\.html)"', r.text):
+                href = m.group(1)
+                if href not in detail_links:
+                    detail_links.append(href)
         all_imgs = []
         for dl in detail_links[:10]:
             try:
                 dr = s.get(dl, timeout=25)
             except Exception:
                 continue
-            for m in re.finditer(r'<img[^>]+(?:src|data-src|data-original)="(https?://xr\.afxfl\.com/uploads/[^"]+)"', dr.text):
+            for m in re.finditer(r'<img[^>]+(?:src|data-src|data-original)="(https?://[^"]+\.(?:jpg|jpeg|png|webp))"', dr.text, re.I):
                 u = m.group(1)
                 if (dl, u) not in all_imgs:
                     all_imgs.append((dl, u))
+            if not all_imgs:
+                for m in re.finditer(r'(https?://xr\.afxfl\.com[^"\']+\.(?:jpg|jpeg|png|webp))', dr.text, re.I):
+                    u = m.group(1)
+                    if (dl, u) not in all_imgs:
+                        all_imgs.append((dl, u))
         _xiurenai_cache[keyword] = _interleave(all_imgs)
     pairs = _xiurenai_cache[keyword]
     start = max(page - 1, 0) * per_page
@@ -861,7 +895,7 @@ def search_pornhub_page(keyword, page, per_page=20):
 def search_pornhub_albums_page(keyword, page, per_page=20):
     """cn.pornhub.com/albums: Pornhub 图集，进图集提取大图"""
     try:
-        r = http_get("https://cn.pornhub.com/albums", params={"search": keyword}, timeout=25)
+        r = http_get("https://cn.pornhub.com/albums", params={"search": keyword}, timeout=25, retries=2)
     except Exception as e:
         raise ValueError(f"Pornhub 图集访问失败: {e}") from e
     albums = list(dict.fromkeys(re.findall(r'href="(/album/\d+)"', r.text)))[:8]
@@ -869,12 +903,12 @@ def search_pornhub_albums_page(keyword, page, per_page=20):
     seen = set()
     for ap in albums:
         try:
-            ar = http_get("https://cn.pornhub.com" + ap, timeout=25)
+            ar = http_get("https://cn.pornhub.com" + ap, timeout=25, retries=2)
         except Exception:
             continue
         title_m = re.search(r'<title>(.*?)</title>', ar.text, re.S)
         title = re.sub(r"\s+", " ", title_m.group(1)).strip()[:100] if title_m else keyword
-        for m in re.finditer(r'<img[^>]+(?:src|data-src|data-image)="(https?://(?:pix-fl|ei\.phncdn)[^"]+)"', ar.text):
+        for m in re.finditer(r'<img[^>]+(?:src|data-src|data-image)="(https?://(?:pix-fl|ei\.phncdn|ci\.phncdn)[^"]+)"', ar.text):
             u = m.group(1)
             if u in seen or "/thumb" in u or "www-static" in u or "/images/" in u:
                 continue
@@ -890,7 +924,7 @@ def search_pornhub_albums_page(keyword, page, per_page=20):
 def search_pornpics_page(keyword, page, per_page=20):
     """pornpics.com: 色情图片搜索"""
     try:
-        r = http_get("https://www.pornpics.com/", params={"q": keyword}, timeout=25)
+        r = http_get("https://www.pornpics.com/", params={"q": keyword}, timeout=25, retries=2)
     except Exception as e:
         raise ValueError(f"Pornpics 访问失败: {e}") from e
     items = []
@@ -986,7 +1020,7 @@ def search_unsplash_page(keyword, page, api_key, per_page=20):
                 "https://api.unsplash.com/search/photos",
                 params={"query": keyword, "page": page, "per_page": per_page},
                 headers={**HEADERS, "Authorization": f"Client-ID {api_key}"},
-                retries=1,
+                retries=2,
             )
         except Exception as e:
             raise ValueError(f"Unsplash API 访问失败: {e}") from e
@@ -1167,14 +1201,15 @@ def search_xsnvshen_page(keyword, page, per_page=20):
             except Exception as e:
                 raise ValueError(f"秀色女神访问失败: {e}") from e
             for m in re.finditer(
-                r'<a[^>]+href="(/album/\d+)"[^>]+class="itemimg"[^>]*title="([^"]*)"[^>]*>',
+                r'<a[^>]+href="(/album/\d+)"[^>]*(?:class="itemimg"|title="([^"]*)")',
                 r.text,
                 re.S,
             ):
-                href, title = m.group(1), m.group(2)
-                if keyword in title:
+                href = m.group(1)
+                title = m.group(2) or ""
+                if keyword in title or keyword.lower() in title.lower():
                     album_ids.append(href)
-        album_ids = album_ids[:8]
+        album_ids = list(dict.fromkeys(album_ids))[:8]
         all_imgs = []
         for ap in album_ids:
             try:
@@ -1182,9 +1217,9 @@ def search_xsnvshen_page(keyword, page, per_page=20):
             except Exception:
                 continue
             seen_local = set()
-            for mm in re.finditer(r"data-original=['\"](//?img\.xsnvshen\.co/album/[^'\"]+)['\"]", ar.text):
+            for mm in re.finditer(r"(?:data-original|src|data-src)=['\"]([^'\"]+img[^'\"]+)['\"]", ar.text):
                 u = mm.group(1)
-                if "/thumb_" in u:
+                if "/thumb_" in u or "logo" in u or "icon" in u:
                     continue
                 if u.startswith("//"):
                     u = "https:" + u

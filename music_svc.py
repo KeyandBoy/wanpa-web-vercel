@@ -244,6 +244,12 @@ def _search_jamendo(keyword, page, page_size):
     client_id = _jamendo_client_id()
     if not client_id:
         return []
+    try:
+        from trans_svc import has_chinese, to_en
+        if has_chinese(keyword):
+            keyword = to_en(keyword)
+    except Exception:
+        pass
     data = _request_json("jamendo", "https://api.jamendo.com/v3.0/tracks/", {
         "client_id": client_id, "format": "json", "search": keyword,
         "limit": page_size, "offset": (page - 1) * page_size,

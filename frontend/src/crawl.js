@@ -228,7 +228,9 @@ export async function runCrawl({
       }
     } catch (e) {
       if (e.name === 'AbortError') continue
-      onLog?.(`${source}: 搜索失败 ${e.message}`)
+      const etype = e.errorType || ''
+      const typeLabel = etype === 'timeout' ? '(超时)' : etype === 'connection_error' ? '(连接失败)' : etype === 'source_blocked' ? '(源站拦截)' : etype === 'ssl_error' ? '(SSL错误)' : ''
+      onLog?.(`${source}: 搜索失败${typeLabel} ${e.message}`)
       failed += 1
       emit()
       continue
@@ -251,7 +253,7 @@ export async function runCrawl({
         seq += 1
         const ext = extFromType(blob.type)
         const path = `${keyword}/图片/${keyword}_${source}_${String(seq).padStart(3, '0')}.${ext}`
-        const saved = await sink.save({ path, seq, blob, item })
+        const saved = await sink.save({ path, seq, blob, item, source })
         meta.push({
           time: nowTime(),
           keyword,
@@ -462,9 +464,10 @@ export function createBlobSink(taskId) {
   const urls = []
   const reports = []
   return {
-    async save({ path, seq, blob }) {
+    async save({ path, seq, blob, source }) {
       const ext = extFromType(blob.type)
-      const r = await api.uploadBlob(taskId, seq, ext, blob)
+      const key = source ? `${source}_${seq}` : `${seq}`
+      const r = await api.uploadBlob(taskId, key, ext, blob)
       urls.push(r.url)
       return { previewUrl: r.url, remoteUrl: r.url }
     },
