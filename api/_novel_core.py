@@ -4,6 +4,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from maccms_svc import search_novel as _h62_search, get_novel_content as _h62_content
 
@@ -25,15 +26,12 @@ def _t2s(text):
 
 
 def _proxy():
-    p = (
-        os.environ.get("HTTPS_PROXY")
-        or os.environ.get("https_proxy")
-        or os.environ.get("HTTP_PROXY")
-        or os.environ.get("http_proxy")
-    )
-    if p:
-        return p
-    return None
+    try:
+        from env_utils import proxy as _p
+
+        return _p()
+    except Exception:
+        return None
 
 
 def _session():

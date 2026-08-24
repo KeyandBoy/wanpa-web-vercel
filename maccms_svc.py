@@ -95,7 +95,13 @@ def _decrypt(text):
 
 def _fetch(url, timeout=20):
     """抓取页面并解密为正常 HTML；无加密 div 时原样返回"""
-    r = requests.get(url, headers={"User-Agent": _UA}, timeout=timeout, verify=False)
+    try:
+        from env_utils import proxies as _proxies
+
+        proxies = _proxies()
+    except Exception:
+        proxies = None
+    r = requests.get(url, headers={"User-Agent": _UA}, timeout=timeout, verify=False, proxies=proxies)
     r.raise_for_status()
     return _decrypt(r.text)
 

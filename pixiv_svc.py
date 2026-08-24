@@ -11,12 +11,13 @@ def _proxy():
     global _proxy_p
     if _proxy_p is not None:
         return _proxy_p
-    p = (
-        os.environ.get("HTTPS_PROXY")
-        or os.environ.get("https_proxy")
-        or os.environ.get("HTTP_PROXY")
-        or os.environ.get("http_proxy")
-    )
+    p = None
+    try:
+        from env_utils import proxy as _p
+
+        p = _p()
+    except Exception:
+        pass
     _proxy_p = p or ""
     return _proxy_p
 

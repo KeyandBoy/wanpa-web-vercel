@@ -3,10 +3,24 @@ import re
 
 import requests
 
+try:
+    from env_utils import proxies as _proxies
+except Exception:
+    def _proxies():
+        return None
+
 
 def _key():
     k = os.environ.get("DEEPSEEK_KEY") or ""
-    return k if k and not k.startswith("sk-在这里") else None
+    if k and not k.startswith("sk-在这里"):
+        return k
+    try:
+        from env_utils import env as _env
+
+        k2 = _env("DEEPSEEK_KEY", "")
+        return k2 if k2 and not k2.startswith("sk-在这里") else None
+    except Exception:
+        return None
 
 
 def available():
@@ -31,6 +45,7 @@ def chat(system, user, max_tokens=800, temperature=0.7):
             "stream": False,
         },
         timeout=50,
+        proxies=_proxies(),
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()

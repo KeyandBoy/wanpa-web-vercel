@@ -34,7 +34,12 @@ class MusicSourceError(RuntimeError):
 
 
 def _config(name, default=""):
-    return os.environ.get(name, default)
+    try:
+        from env_utils import env as _env
+
+        return _env(name, default)
+    except Exception:
+        return os.environ.get(name, default)
 
 
 def _proxies():

@@ -15,22 +15,12 @@ JP = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
 
 
 def _proxy():
-    p = (
-        os.environ.get("HTTPS_PROXY")
-        or os.environ.get("https_proxy")
-        or os.environ.get("HTTP_PROXY")
-        or os.environ.get("http_proxy")
-    )
-    if p:
-        return p
     try:
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip().startswith("PROXY="):
-                    return line.strip().split("=", 1)[1].strip()
-    except OSError:
-        pass
-    return None
+        from env_utils import proxy as _p
+
+        return _p()
+    except Exception:
+        return None
 
 
 def has_chinese(text):

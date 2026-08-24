@@ -52,7 +52,7 @@ python local_server.py
    Import this repo to Vercel (Framework Preset: Other, leave Build Command empty)
 2. 在 Vercel 中启用 KV（Store → KV → Create），获取 REST URL 与 Token
    Enable Vercel KV (Store → KV → Create) and grab the REST URL and token
-3. 环境变量 / Environment variables:
+3. 环境变量 / Environment variables（Vercel → Settings → Environment Variables）:
    - `KV_REST_API_URL`：Vercel KV REST URL（激活码持久化需要，不配则回退本地内存，重启丢失）
      Vercel KV REST URL (required to persist activation codes; falls back to in-memory otherwise)
    - `KV_REST_API_TOKEN`：Vercel KV REST Token
@@ -61,12 +61,24 @@ python local_server.py
      Admin key for `POST /api/issue-code`
    - `WANPA_PLUS_SECRET`：可选，token 签发密钥（不配使用默认值）
      Optional token signing secret
+   - `WANPA_MASTER_CODE`：可选，管理员主激活码（逗号分隔，永久有效）
+     Optional master activation codes (comma separated, permanent)
+   - `PROXY`：爬虫代理地址，格式 `http://user:pass@host:port`
+     Crawler proxy URL, format `http://user:pass@host:port`
    - `DEEPSEEK_KEY`：DeepSeek API Key（AI 功能需要，可留空自动降级）
      DeepSeek API Key (required for AI features, can be left empty to auto-degrade)
-   - `PROXY`：可选，爬虫代理地址，格式 `http://user:pass@host:port`
-     Optional crawler proxy, format `http://user:pass@host:port`
-   - `PIXIV_PHPSESSID`：可选，Pixiv 源需要，格式 `12345678_xxxx...`
-     Optional Pixiv PHPSESSID cookie
+   - `PIXIV_PHPSESSID`：Pixiv 源需要，格式 `12345678_xxxx...`
+     Pixiv PHPSESSID cookie
+   - `PEXELS_KEY`：Pexels API Key（不配则退回 HTML 爬取，云端可能被 403）
+     Pexels API Key (falls back to HTML scraping which may be blocked on Vercel)
+   - `UNSPLASH_KEY`：Unsplash API Access Key（不配则被源站防护墙拦截）
+     Unsplash API Access Key (required, otherwise blocked by the source firewall)
+   - `JAMENDO_CLIENT_ID`：Jamendo 音乐源 Client ID（不配则该源返回空）
+     Jamendo music Client ID (required for the Jamendo source)
+   - `PIXABAY_KEY`：可选，Pixabay API Key（不配也能用，但有配额）
+     Optional Pixabay API Key (works without, but rate-limited)
+   - `GOOGLE_BOOKS_KEY`：可选，Google Books API Key（不配也能用，但有配额）
+     Optional Google Books API Key (works without, but rate-limited)
    - `MACCMS_BASE`：可选，hhe62 服务地址覆盖（默认 `https://zfxdrshm.top:2549`）
      Optional override for the maccms service base URL
 4. 部署后访问线上地址即可 / Visit the deployed URL after deployment
@@ -74,6 +86,57 @@ python local_server.py
 > 注意：所有 Plus 接口（`/api/search` 的 plus 源、`/api/comic-*`、`/api/novel-*` 的 hhe62 分支）
 > 均要求 token。token 通过 `GET /api/verify?code=WANPA-XXXX-XXXX-XXXX` 获得。
 > Note: all Plus endpoints require a token obtained from `GET /api/verify?code=WANPA-XXXX-XXXX-XXXX`.
+
+## 环境变量 / 密钥配置指南（Environment Variables Guide）
+
+### 本地开发 / Local development
+
+本地运行时（`python local_server.py`），配置写在项目根目录的 `.env` 或 `.env.local`
+（`.env.local` 优先级更高，两者均已被 `.gitignore` 忽略，不会提交）。
+格式为每行 `KEY=value`：
+
+```ini
+# 爬虫代理：Clash / V2rayN 等本地代理端口
+PROXY=http://127.0.0.1:7897
+
+# DeepSeek AI 密钥（在 platform.deepseek.com 注册获取）
+DEEPSEEK_KEY=sk-xxxxxxxxxxxxxxxx
+
+# Pixiv cookie（见下方获取方法）
+PIXIV_PHPSESSID=12345678_xxxxxxxx
+```
+
+> 代理只对"海外源"生效。国内源（bing / baidu / 360 / 堆糖 / 秀人 / 笔趣阁等）使用直连，
+> 不走代理，因此在国内网络下也能正常使用。
+
+### Vercel 云端 / On Vercel
+
+云端请把**同一组变量**填到 `Vercel → Settings → Environment Variables` 后 Redeploy。
+`PROXY` 在云端必须是**公网可达的代理**（不能是 `127.0.0.1`），
+例如自建 VPS 上的 HTTP 代理、或机场服务商提供的 HTTP/SOCKS 代理出口。
+没有公网代理时，海外源（Yahoo / Pexels / Pixiv / 海外小说与漫画源等）在云端无法稳定访问。
+
+### 各密钥获取方法 / How to obtain each key
+
+| 变量 | 用途 | 获取方法 |
+| --- | --- | --- |
+| `PROXY` | 爬虫代理（海外源） | 本地：Clash/V2rayN 的混合端口；云端：自建 VPS 或机场 HTTP 代理 |
+| `DEEPSEEK_KEY` | AI 摘要/过滤/清洗 | 打开 `https://platform.deepseek.com` → 注册/登录 → 左侧「API Keys」→「创建 API Key」→ 复制 `sk-...` |
+| `PIXIV_PHPSESSID` | Pixiv 图片源 | 电脑浏览器登录 `https://www.pixiv.net`（保持登录）→ 按 F12 打开开发者工具 → Network 标签 → 刷新页面 → 任选一个请求 → Headers → Cookie → 找到 `PHPSESSID=xxxx`，复制等号后的值 |
+| `PEXELS_KEY` | Pexels 图库 | 打开 `https://www.pexels.com/api/` → 注册/登录 → 「Your API Key」→ 生成并复制 |
+| `UNSPLASH_KEY` | Unsplash 图库 | 打开 `https://unsplash.com/developers` → 注册/登录 → 「Your apps」→「New application」同意协议 → 复制 Access Key |
+| `JAMENDO_CLIENT_ID` | Jamendo 音乐 | 打开 `https://devportal.jamendo.com/` → 注册/登录 → 「Your Apps」→「Create app」→ 复制 Client ID |
+| `PIXABAY_KEY` | Pixabay 图库（可选） | 打开 `https://pixabay.com/api/docs/` → 注册/登录 → 右侧即可看到你的 API Key |
+| `GOOGLE_BOOKS_KEY` | Google Books（可选） | 打开 `https://console.cloud.google.com/apis/library/books.googleapis.com` → 启用 Google Books API → 凭据 → 创建 API Key |
+| `MACCMS_BASE` | hhe62 源 | 一般无需配置，默认 `https://zfxdrshm.top:2549` |
+
+### 配置后效果 / Effect after configuration
+
+- 未配置 `UNSPLASH_KEY`：Unsplash 源被源站防护墙拦截，返回错误（而非空结果）。
+- 未配置 `JAMENDO_CLIENT_ID`：音乐源列表不显示 Jamendo。
+- 未配置 `PIXIV_PHPSESSID`：Pixiv 源提示配置。
+- 未配置 `PEXELS_KEY`：Pexels 退回 HTML 爬取，Vercel 云端易被 403。
+- 配置 `PROXY`（公网）后：Yahoo、Pexels、Pixiv、海外小说/漫画源均可稳定访问。
 
 ## 目录结构 / Project Structure
 

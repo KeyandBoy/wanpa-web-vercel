@@ -34,6 +34,14 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 
 def http_get(url, params=None, timeout=20, retries=3, session=None, verify=True, headers=None):
     last = None
+    proxies = None
+    if session is None:
+        try:
+            from env_utils import proxies as _proxies
+
+            proxies = _proxies()
+        except Exception:
+            proxies = None
     for i in range(retries):
         try:
             client = session if session is not None else requests
@@ -43,6 +51,7 @@ def http_get(url, params=None, timeout=20, retries=3, session=None, verify=True,
                 params=params,
                 timeout=timeout,
                 verify=verify,
+                proxies=proxies,
             )
             r.raise_for_status()
             return r
@@ -411,14 +420,12 @@ def search_yahoo_page(keyword, page, per_page=20):
     try:
         from curl_cffi import requests as cr
 
-        proxies = {
-            k: v
-            for k, v in (
-                ("http", os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")),
-                ("https", os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")),
-            )
-            if v
-        }
+        try:
+            from env_utils import proxies as _proxies
+
+            proxies = _proxies()
+        except Exception:
+            proxies = None
         r = cr.get(
             "https://images.search.yahoo.com/search/images",
             params={"p": keyword, "b": page * per_page + 1},
@@ -985,9 +992,15 @@ def search_xxknit_page(keyword, page, per_page=20):
     """xx.knit.bid (爱妹国写真/Cosplay): SSR 搜索，返回图集封面图"""
     from curl_cffi import requests as cr
 
+    try:
+        from env_utils import proxies as _proxies
+
+        proxies = _proxies()
+    except Exception:
+        proxies = None
     url = f"https://xx.knit.bid/zh-hant/search/?s={requests.utils.quote(keyword)}"
     try:
-        r = cr.get(url, impersonate="chrome131", timeout=20)
+        r = cr.get(url, impersonate="chrome131", timeout=20, proxies=proxies)
         if r.status_code != 200:
             raise ValueError(f"xx.knit.bid 返回 {r.status_code}")
     except Exception as e:
@@ -1103,20 +1116,18 @@ def search_anime_pictures_page(keyword, page, per_page=20):
     try:
         from curl_cffi import requests as cr
 
-        proxies = {
-            k: v
-            for k, v in (
-                ("http", os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")),
-                ("https", os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")),
-            )
-            if v
-        }
+        try:
+            from env_utils import proxies as _proxies
+
+            proxies = _proxies()
+        except Exception:
+            proxies = None
         r = cr.get(
             "https://anime-pictures.net/pictures/view_posts/0",
             params={"lang": "zh-cn", "search_tag": keyword, "page": page - 1},
             impersonate="chrome131",
             timeout=25,
-            proxies=proxies or None,
+            proxies=proxies,
         )
         if r.status_code != 200:
             raise ValueError(f"Anime-Pictures 返回 {r.status_code}")
