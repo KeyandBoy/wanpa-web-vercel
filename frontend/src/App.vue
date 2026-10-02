@@ -3,11 +3,13 @@ import { onMounted, ref } from 'vue'
 import CrawlWorkspace from './components/CrawlWorkspace.vue'
 import MusicWorkspace from './components/MusicWorkspace.vue'
 import BookSearchWorkspace from './components/BookSearchWorkspace.vue'
-import { initLicense } from './license'
+import VersionDialog from './components/VersionDialog.vue'
+import { initLicense, license } from './license'
 
 const isDark = ref(false)
 const workspace = ref('image')
 const contentWorkspace = ref('image')
+const versionVisible = ref(false)
 const APP_VERSION = '1.0.0'
 const APP_AUTHOR = 'KeyandBoy'
 
@@ -32,7 +34,7 @@ onMounted(() => {
   isDark.value = document.documentElement.getAttribute('data-theme') === 'dark'
   try {
     const saved = localStorage.getItem('wanpa-workspace') || 'image'
-    workspace.value = ['image', 'music', 'novel', 'comic', 'books'].includes(saved) ? saved : 'image'
+    workspace.value = ['image', 'video', 'music', 'novel', 'comic', 'books'].includes(saved) ? saved : 'image'
     contentWorkspace.value = ['books', 'music'].includes(workspace.value) ? 'image' : workspace.value
   } catch (e) {}
 })
@@ -72,18 +74,33 @@ onMounted(() => {
           <span class="author-tag" title="本软件受自定义授权保护，仅供自用，禁止商用与二次分发">v{{ APP_VERSION }} · {{ APP_AUTHOR }}</span>
           </div>
           <div class="header-actions">
+           <el-tooltip
+             :content="license.version === 'plus' ? 'Plus 授权中，点击查看 / 切换回 Lite' : '当前 Lite，点击查看授权与升级'"
+             placement="bottom"
+             effect="light"
+           >
+            <button class="version-btn" type="button" @click="versionVisible = true" aria-label="版本与授权">
+              <span class="version-dot" :class="license.version === 'plus' ? 'plus' : 'lite'"></span>
+              <span class="version-label">{{ license.version === 'plus' ? 'Plus' : 'Lite' }}</span>
+              <span class="version-caret">▾</span>
+            </button>
+          </el-tooltip>
            <el-tooltip :content="isDark ? '切换到浅色' : '切换到暗色'" placement="bottom" effect="light">
             <button class="theme-btn" type="button" @click="toggleTheme" :aria-label="isDark ? '切换到浅色' : '切换到暗色'">
               <el-icon v-if="isDark" :size="20"><Sunny /></el-icon>
               <el-icon v-else :size="20"><Moon /></el-icon>
             </button>
           </el-tooltip>
+          <VersionDialog v-model="versionVisible" />
         </div>
       </el-header>
       <el-main class="main">
         <nav class="workspace-nav" aria-label="工作区切换">
           <button :class="{ active: workspace === 'image' }" type="button" @click="switchWorkspace('image')">
             <el-icon><Picture /></el-icon>图片
+          </button>
+          <button :class="{ active: workspace === 'video' }" type="button" @click="switchWorkspace('video')">
+            <el-icon><VideoCamera /></el-icon>视频
           </button>
           <button :class="{ active: workspace === 'music' }" type="button" @click="switchWorkspace('music')">
             <el-icon><Headset /></el-icon>音乐

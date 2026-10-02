@@ -519,3 +519,12 @@ export function formatDur(sec) {
   if (m >= 60) return `${Math.floor(m / 60)}小时${m % 60}分`
   return m ? `${m}分${s}秒` : `${s}秒`
 }
+
+export function durationPass(sec, type) {
+  if (type === 'any') return true
+  if (!sec && sec !== 0) return false
+  if (type === 'short') return sec < 600
+  if (type === 'medium') return sec >= 600 && sec < 3600
+  if (type === 'long') return sec >= 3600
+  return true
+}

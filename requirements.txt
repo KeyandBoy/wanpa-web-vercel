@@ -5,3 +5,4 @@ vercel-blob>=0.2
 curl_cffi>=0.6.0
 cryptography>=42.0
 opencc-python-reimplemented>=0.1.7
+yt-dlp>=2025.1.1

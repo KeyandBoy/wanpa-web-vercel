@@ -108,6 +108,16 @@ export const api = {
       if (!r.ok) await throwApiError(r, '目录获取失败')
       return r.json()
     }),
+  novelCategories: () =>
+    fetch(`/api/novel-categories?${qs(tok())}`).then(async (r) => {
+      if (!r.ok) await throwApiError(r, '分类获取失败')
+      return r.json()
+    }),
+  novelCategory: (params) =>
+    fetch(`/api/novel-category?${qs({ ...params, ...tok() })}`).then(async (r) => {
+      if (!r.ok) await throwApiError(r, '分类浏览失败')
+      return r.json()
+    }),
   musicSources: () =>
     fetch('/api/music-sources').then(async (r) => {
       if (!r.ok) await throwApiError(r, '音乐源获取失败')
@@ -144,6 +154,31 @@ export const api = {
   },
   bookDownloadUrl: (url, filename, format) =>
     `/api/book-download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename || 'download')}&format=${encodeURIComponent(format || '')}`,
+  // ---- 视频：搜索 / 解析 / 播放 ----
+  videoSearch: (params) =>
+    fetch(`/api/video-search?${qs({ ...params, ...tok() })}`).then(async (r) => {
+      if (!r.ok) await throwApiError(r, '视频搜索失败')
+      return r.json()
+    }),
+  videoResolve: (url, mode) =>
+    fetch(
+      `/api/video-resolve?url=${encodeURIComponent(url)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}`
+    ).then(async (r) => {
+      if (!r.ok) await throwApiError(r, '解析失败')
+      return r.json()
+    }),
+  douyinParse: (url) =>
+    fetch(`/api/douyin-parse?url=${encodeURIComponent(url)}`).then(async (r) => {
+      if (!r.ok) await throwApiError(r, '抖音解析失败')
+      return r.json()
+    }),
+  // sig 由 /api/video-resolve 返回，必须拼上，否则播放接口一律 403
+  videoPreviewUrl: (directUrl, sig) =>
+    `/api/video-preview?url=${encodeURIComponent(directUrl)}${sig ? `&sig=${encodeURIComponent(sig)}` : ''}`,
+  hlsPlaylistUrl: (m3u8Url, sig) =>
+    `/api/hls-playlist?url=${encodeURIComponent(m3u8Url)}${sig ? `&sig=${encodeURIComponent(sig)}` : ''}`,
+  hlsSegUrl: (segUrl, sig) =>
+    `/api/hls-seg?url=${encodeURIComponent(segUrl)}${sig ? `&sig=${encodeURIComponent(sig)}` : ''}`,
   dsSummarize: (text) =>
     fetch('/api/ds-summarize', {
       method: 'POST',

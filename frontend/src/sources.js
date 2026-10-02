@@ -57,6 +57,14 @@ export const SOURCE_GROUPS = [
         tier: 'plus'
       },
       {
+        id: 'cg51',
+        label: '51吃瓜网',
+        desc: '成人内容！51吃瓜网，关键词搜索帖子后自动进帖抓取该帖全部图片（帖子=图集）；域名自动跟随最新地址，国内直连可用。',
+        tag: '成人',
+        adult: true,
+        tier: 'plus'
+      },
+      {
         id: 'hhe62',
         label: 'hhe62美图',
         desc: '成人内容！hhe62 成人站美图图集，关键词匹配 7 个分类最新列表标题，返回图集内高清大图（按图集均分交错排列）。需配置 MACCMS_BASE（默认 https://zfxdrshm.top:2549）。',
@@ -230,6 +238,46 @@ export const SOURCE_GROUPS = [
         tier: 'lite'
       }
     ]
+  },
+  {
+    name: '随机·忽略关键词',
+    items: [
+      {
+        id: 'dogceo',
+        label: '旺财随机图',
+        desc: '狗品种随机图片（dog.ceo）。不支持关键词，每次调用都返回不同内容；国内直连可用。',
+        tag: '随机',
+        tier: 'lite'
+      },
+      {
+        id: 'catapi',
+        label: '猫咪随机图',
+        desc: '猫咪随机图片（TheCatAPI）。不支持关键词，每次调用都返回不同内容；需海外网络。',
+        tag: '随机',
+        tier: 'lite'
+      },
+      {
+        id: 'bingwp',
+        label: 'Bing壁纸库',
+        desc: 'Bing 壁纸全量库（1600+ 张 1920x1080），按页轮换。不支持关键词；国内直连可用。',
+        tag: '随机',
+        tier: 'lite'
+      },
+      {
+        id: 'bingbg',
+        label: 'Bing每日壁纸',
+        desc: 'Bing 每日壁纸接口（仅当日几张），按页轮换。不支持关键词；国内直连可用。',
+        tag: '随机',
+        tier: 'lite'
+      },
+      {
+        id: 'picsum',
+        label: 'Picsum图库',
+        desc: 'Lorem Picsum 免费图库，带作者与尺寸，真分页浏览。不支持关键词；需海外网络。',
+        tag: '随机',
+        tier: 'lite'
+      }
+    ]
   }
 ]
 
@@ -254,6 +302,23 @@ export const SIMPLE_GROUPS = [
     desc: '美图录/秀色女神/hhe62美图（Plus 专属，成人内容）',
     tier: 'plus',
     sources: ['meitulu', 'xsnvshen', 'hhe62']
+  },
+  {
+    id: 'cg51',
+    label: '51吃瓜',
+    tag: '成人',
+    adult: true,
+    tier: 'plus',
+    desc: '51吃瓜网：搜帖子后自动进帖抓全图，帖子即图集；域名自动跟随最新地址，国内直连',
+    sources: ['cg51']
+  },
+  {
+    id: 'random',
+    label: '随机图片',
+    tag: '随机',
+    tier: 'lite',
+    desc: '随机图片：旺财/猫咪/Bing壁纸库/Bing每日壁纸/Picsum（忽略关键词，每次结果都不同）',
+    sources: ['dogceo', 'catapi', 'bingwp', 'bingbg', 'picsum']
   },
   {
     id: 'library',
@@ -298,6 +363,138 @@ export const SIMPLE_GROUPS = [
   }
 ]
 
+// 视频源：tier 与 api/_auth.py 的 PLUS_VIDEO 必须保持一致
+export const VIDEO_SOURCES = [
+  {
+    id: 'bing',
+    label: '必应视频',
+    desc: '必应视频聚合搜索，结果多为 B站、腾讯视频、爱奇艺等中文平台；国内直接可用。\n\n说明：部分结果站点（爱奇艺、搜狐）无法解析直链，选 B站、腾讯视频等条目即可。',
+    tag: '中文聚合',
+    tier: 'lite'
+  },
+  {
+    id: 'bilibili',
+    label: 'B站',
+    desc: 'Bilibili 官方搜索 API，返回视频标题、封面、时长（按人气排序）；国内直接可用。\n\n在线播放采用双流同步（视频流 + 音频流），无需合并。',
+    tag: '国内',
+    tier: 'lite'
+  },
+  {
+    id: 'acfun',
+    label: 'AcFun',
+    desc: 'AcFun 官方搜索接口，返回视频标题、封面、时长；国内直接可用。',
+    tag: '国内',
+    tier: 'lite'
+  },
+  {
+    id: 'youku',
+    label: '优酷',
+    desc: '优酷视频聚合搜索（SSR 页面解析），返回标题、时长；国内直接可用。\n\n说明：结果无封面图，时长来自页面数据。',
+    tag: '国内',
+    tier: 'lite'
+  },
+  {
+    id: 'mgtv',
+    label: '芒果TV',
+    desc: '芒果TV 官方搜索接口，返回影视剧/综艺/少儿等节目条目与封面；国内直接可用。\n\n说明：当前网络环境下播放源域名被阻断，芒果TV 条目暂无法播放，仅供浏览检索。',
+    tag: '国内',
+    tier: 'lite'
+  },
+  {
+    id: 'yahoo',
+    label: 'Yahoo视频',
+    desc: 'Yahoo 视频聚合搜索，结果多为 YouTube、B站 等平台，含时长信息；需代理。',
+    tag: '海外聚合',
+    tier: 'lite'
+  },
+  {
+    id: 'youtube',
+    label: 'YouTube',
+    desc: 'YouTube 站内搜索，在线播放封顶 1080p；需海外网络。\n\nDASH 站，播放时视频流与音频流分别加载后同步。',
+    tag: '海外',
+    tier: 'lite'
+  },
+  {
+    id: 'twitter',
+    label: 'Twitter/X',
+    desc: 'Twitter/X 搜索含图片/视频的推文（需登录 Cookie，在设置 TWITTER_COOKIE 填写 auth_token=...; ct0=...）。视频取最高画质 HLS 流；需海外节点。',
+    tag: '海外',
+    tier: 'lite'
+  },
+  {
+    id: 'pornhub',
+    label: 'Pornhub',
+    desc: '成人内容！Pornhub 站内搜索，在线播放封顶 1080p；需海外节点，且节点所在国家不能屏蔽成人站（如韩国会直接掐断）。\n\n注意：搜索结果不含时长信息，时长过滤请选「不限」；用链接解析 tab 粘贴视频页链接则不受此限制。',
+    tag: '成人',
+    adult: true,
+    tier: 'plus'
+  },
+  {
+    id: 'thothub',
+    label: 'ThotHub',
+    desc: '成人内容！ThotHub 站内搜索，在线播放封顶 1080p，含时长信息；需海外节点。',
+    tag: '成人',
+    adult: true,
+    tier: 'plus'
+  },
+  {
+    id: 'xnxx',
+    label: 'XNXX',
+    desc: '成人内容！XNXX 站内搜索，在线播放封顶 1080p；需海外节点。\n\n搜索结果不含时长，时长过滤请选「不限」。',
+    tag: '成人',
+    adult: true,
+    tier: 'plus'
+  },
+  {
+    id: 'xvideos',
+    label: 'XVIDEOS',
+    desc: '成人内容！XVIDEOS 站内搜索，在线播放封顶 1080p，含时长信息；需海外节点。',
+    tag: '成人',
+    adult: true,
+    tier: 'plus'
+  },
+  {
+    id: 'xhamster',
+    label: 'xHamster',
+    desc: '成人内容！xHamster 站内搜索，在线播放封顶 1080p；需海外节点。\n\n搜索结果不含时长，时长过滤请选「不限」。',
+    tag: '成人',
+    adult: true,
+    tier: 'plus'
+  },
+  {
+    id: 'doll',
+    label: '玩偶姐姐',
+    desc: '成人内容！玩偶姐姐/麻豆系（hongkongdollvideo.com，含麻豆传媒/蜜桃传媒/糖心Vlog/91制片厂/天美传媒），站内搜索返回视频列表，解析走 yt-dlp；需海外节点。\n\n本部署无浏览器环境，播放以嗅探/直链为准。',
+    tag: '成人',
+    adult: true,
+    tier: 'plus'
+  },
+  {
+    id: 'cg51',
+    label: '51吃瓜网',
+    desc: '成人内容！51吃瓜网站内搜索，帖子即视频，自动解析 HLS 流在线播放；域名自动跟随最新地址，国内直连可用。\n\n搜索结果不含时长，时长过滤请选「不限」。',
+    tag: '成人',
+    adult: true,
+    tier: 'plus'
+  },
+  {
+    id: 'xjj',
+    label: '高质量小姐姐',
+    desc: '随机小姐姐视频（api.kuleu.com）。不支持关键词，每次调用都返回不同 mp4 直链，可直接预览；国内直连可用。\n\n搜索结果不含时长，时长过滤请选「不限」。',
+    tag: '随机',
+    tier: 'lite'
+  },
+  {
+    id: 'link',
+    label: '链接解析',
+    desc: '粘贴视频页面链接直接解析播放，支持 B站、YouTube 及大量 yt-dlp 支持的站点；无需搜索。',
+    tag: '直链',
+    tier: 'lite'
+  }
+]
+
+export const videoSourceMap = Object.fromEntries(VIDEO_SOURCES.map((s) => [s.id, s]))
+
 export const NOVEL_SOURCES = [
   { id: 'aaanovel', label: 'AAA成人小说', desc: 'AAA成人小说，中文情色文学，关键词搜索返回小说文章；需代理。', tag: '中文', adult: true, tier: 'plus' },
   { id: '1000novel', label: '1000成人小说', desc: '1000成人小说，中文情色文学；需代理。', tag: '中文', adult: true, tier: 'plus' },
@@ -307,10 +504,57 @@ export const NOVEL_SOURCES = [
   { id: 'h528', label: '风月文学网', desc: '风月文学网，中文情色文学；需代理。', tag: '中文', adult: true, tier: 'plus' },
   { id: '69story', label: '69成人小说', desc: '69成人小说网，中文成人文学；需代理。', tag: '中文', adult: true, tier: 'plus' },
   { id: 'biquga', label: '笔趣阁', desc: '笔趣阁（biquga.com），中文网文小说库；Vercel 云上可直接访问。', tag: '中文', tier: 'lite' },
+  { id: 'txt800', label: '800小说网', desc: '800小说网（txt800.cc），中文网文小说下载站，关键词搜索返回书页，整本 TXT 下载；Vercel 云上可直接访问。', tag: '中文', tier: 'lite' },
+  { id: 'bqgnovels', label: '新笔趣阁', desc: '新笔趣阁（bqgnovels.com），中文网文小说库，JSON API 干净搜索，分章节阅读/整本下载；Vercel 云上可直接访问。', tag: '中文', tier: 'lite' },
+  { id: 'ttkan', label: '天天看小说', desc: '天天看小说（cn.ttkan.co），中文网文小说库，支持关键词搜索 + 按内容分类浏览（玄幻/都市/言情/仙侠等 15+ 分类），分章节阅读；Vercel 云上可直接访问。', tag: '中文', tier: 'lite', category: true },
   { id: 'bdsmcafe', label: 'BDSMCafe', desc: 'BDSMCafe，英文 BDSM 故事站；需代理。', tag: '英文', adult: true, tier: 'plus' },
   { id: 'chyoa', label: 'CHYOA', desc: 'CHYOA，英文互动色情小说站；需代理。', tag: '英文', adult: true, tier: 'plus' },
   { id: 'alicesw', label: '爱丽丝书屋', desc: '爱丽丝书屋（alicesw.com），中文原创小说站（含成人向作品），关键词直接搜索；国内可直连。', tag: '中文', adult: true, tier: 'plus' },
   { id: 'hhe62', label: 'hhe62小说', desc: '成人内容！hhe62 成人站小说分类（8 类），关键词匹配最新列表标题返回小说列表，点开阅读正文。需配置 MACCMS_BASE（默认 https://zfxdrshm.top:2549）。', tag: '中文', adult: true, tier: 'plus' }
+]
+
+export const SIMPLE_VIDEO_GROUPS = [
+  {
+    id: 'cn',
+    label: '国内',
+    tag: '中文',
+    desc: '必应视频聚合搜索/B站/AcFun/优酷/芒果TV',
+    tier: 'lite',
+    sources: ['bing', 'bilibili', 'acfun', 'youku', 'mgtv']
+  },
+  {
+    id: 'foreign',
+    label: '国外通用',
+    tag: '海外',
+    desc: 'Yahoo视频/YouTube/Twitter',
+    tier: 'lite',
+    sources: ['yahoo', 'youtube', 'twitter']
+  },
+  {
+    id: 'adult',
+    label: 'porn成人',
+    tag: '成人',
+    adult: true,
+    desc: 'Pornhub/ThotHub/XNXX/XVIDEOS/xHamster/玩偶姐姐/51吃瓜网',
+    tier: 'plus',
+    sources: ['pornhub', 'thothub', 'xnxx', 'xvideos', 'xhamster', 'doll', 'cg51']
+  },
+  {
+    id: 'random',
+    label: '随机视频',
+    tag: '随机',
+    desc: '随机小姐姐视频（忽略关键词，每次结果都不同，mp4 直链）',
+    tier: 'lite',
+    sources: ['xjj']
+  },
+  {
+    id: 'link',
+    label: '链接解析',
+    tag: '直链',
+    desc: '粘贴视频页面链接直接解析播放',
+    tier: 'lite',
+    sources: ['link']
+  }
 ]
 
 export const SIMPLE_NOVEL_GROUPS = [
@@ -318,9 +562,9 @@ export const SIMPLE_NOVEL_GROUPS = [
     id: 'wangwen',
     label: '网文',
     tag: '网文',
-    desc: '笔趣阁（biquga.com）—— 普通网文小说库',
+    desc: '笔趣阁/800小说网/新笔趣阁/天天看小说 —— 普通网文小说库（天天看支持分类浏览）',
     tier: 'lite',
-    sources: ['biquga']
+    sources: ['biquga', 'txt800', 'bqgnovels', 'ttkan']
   },
   {
     id: 'porn_cn',
@@ -420,6 +664,7 @@ export const PLUS_SOURCES = new Set(
     .filter((s) => s.tier === 'plus')
     .map((s) => s.id)
     .concat(NOVEL_SOURCES.filter((s) => s.tier === 'plus').map((s) => s.id))
+    .concat(VIDEO_SOURCES.filter((s) => s.tier === 'plus').map((s) => s.id))
     .concat(COMIC_SOURCES.map((s) => s.id))
 )
 
@@ -428,4 +673,5 @@ export const LITE_SOURCES = new Set(
     .filter((s) => s.tier === 'lite')
     .map((s) => s.id)
     .concat(NOVEL_SOURCES.filter((s) => s.tier === 'lite').map((s) => s.id))
+    .concat(VIDEO_SOURCES.filter((s) => s.tier === 'lite').map((s) => s.id))
 )

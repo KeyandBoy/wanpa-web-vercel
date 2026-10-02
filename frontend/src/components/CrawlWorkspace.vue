@@ -3,7 +3,8 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { isLocal } from '../api'
 import {
-  SOURCE_GROUPS, sourceMap, SIMPLE_GROUPS, NOVEL_SOURCES, SIMPLE_NOVEL_GROUPS,
+  SOURCE_GROUPS, sourceMap, VIDEO_SOURCES, videoSourceMap, SIMPLE_GROUPS,
+  NOVEL_SOURCES, SIMPLE_NOVEL_GROUPS, SIMPLE_VIDEO_GROUPS,
   COMIC_GROUPS, COMIC_SOURCES, SIMPLE_COMIC_GROUPS, PLUS_SOURCES, LITE_SOURCES
 } from '../sources'
 import {
@@ -12,6 +13,8 @@ import {
   createFolderSink,
   createMemorySink,
   downloadZip,
+  durationPass,
+  formatDur,
   formatReport,
   nowTime,
   passLayers,
@@ -40,6 +43,21 @@ const form = reactive({
 
 const mode = computed(() => props.mode)
 const viewMode = ref('detail')
+const heroTitle = computed(
+  () => ({ image: '图片资源', video: '视频资源', novel: '小说资源', comic: '漫画资源' })[mode.value] || '资源'
+)
+const heroDesc = computed(
+  () =>
+    ({
+      image: '跨多个图片来源检索、筛选并批量保存资源。',
+      video: '跨多个视频源检索、解析并在本页在线播放。',
+      novel: '检索小说内容，在线阅读并保存个人学习资料。',
+      comic: '检索漫画作品，预览页面并保存开放内容。'
+    })[mode.value] || ''
+)
+const heroMark = computed(
+  () => ({ image: 'IMG', video: 'VID', novel: 'TXT', comic: 'COMIC' })[mode.value] || ''
+)
 const navTabs = []
 const leftWidth = ref(420)
 const cform = reactive({
@@ -73,6 +91,122 @@ const nDone = ref(0)
 const nTotal = ref(0)
 const nSummary = ref('')
 const nSummarizing = ref(false)
+const nCategories = ref([])
+const nCategoryMode = ref(false)
+const nCategoryType = ref('')
+const nCategoryLoading = ref(false)
+const nCategoryPage = ref(1)
+const nReaderSettings = reactive({
+  fontSize: parseInt(localStorage.getItem('novel_fontSize') || '18', 10),
+  lineHeight: parseFloat(localStorage.getItem('novel_lineHeight') || '2.0'),
+  bgMode: localStorage.getItem('novel_bgMode') || 'sepia' // day | sepia | night
+})
+const nChapters = ref([])
+const nChaptersLoading = ref(false)
+const nCurrentChapterIndex = ref(0)
+const nChapterContent = ref('')
+
+// ---- 视频：搜索 / 解析 / 在线播放 ----
+const vform = reactive({
+  keyword: '',
+  sources: ['bing'],
+  count: 10,
+  duration: 'any',
+  layers: []
+})
+const vTab = ref('search')
+const vResults = ref([])
+const vSearching = ref(false)
+const vFilteredOut = ref(0)
+const videoLogs = ref([])
+function pushVideoLog(msg) {
+  videoLogs.value.push(`[${new Date().toLocaleTimeString()}] ${msg}`)
+  if (videoLogs.value.length > 200) videoLogs.value.splice(0, videoLogs.value.length - 200)
+}
+
+const linkUrl = ref('')
+const linkTitle = ref('')
+const linkInfo = ref(null)
+const linkResolving = ref(false)
+const linkMode = ref('auto')
+const linkResults = ref([])
+
+// 播放器：DASH 站音视频分离时用两个元素同步（服务端无 ffmpeg 合不了流）
+const playerSrc = ref('')
+const playerSig = ref('')
+const playerAudioSrc = ref('')
+const playerAudioSig = ref('')
+const playerTitle = ref('')
+const playerLoading = ref(false)
+const playerItemUrl = ref('')
+const playerSession = ref(0)
+const playerReady = ref(false)
+const playerHeight = ref(360)
+const playerHint = ref('')
+const videoRef = ref(null)
+const audioRef = ref(null)
+let hlsInstance = null
+let HlsModule = null
+
+async function loadHls() {
+  if (!HlsModule) HlsModule = await import('hls.js')
+  return HlsModule.default
+}
+
+function destroyHls() {
+  if (hlsInstance) {
+    hlsInstance.destroy()
+    hlsInstance = null
+  }
+}
+
+function resetPlayer() {
+  destroyHls()
+  playerSrc.value = ''
+  playerSig.value = ''
+  playerAudioSrc.value = ''
+  playerAudioSig.value = ''
+  playerReady.value = false
+  playerHint.value = ''
+}
+
+// 双流同步：视频元素是主控（用户操作它），音频元素静默跟随
+let audioSyncing = false
+function safeSetTime(el, t) {
+  if (!el) return
+  try {
+    audioSyncing = true
+    el.currentTime = t
+  } catch (_) {
+    /* 元素尚未就绪 */
+  } finally {
+    audioSyncing = false
+  }
+}
+function onVideoPlay() {
+  const a = audioRef.value
+  if (a && playerAudioSrc.value) a.play().catch(() => pushVideoLog('音频自动播放被浏览器拦截，点击播放按钮即可出声'))
+}
+function onVideoPause() {
+  const a = audioRef.value
+  if (a) a.pause()
+}
+function onVideoSeek() {
+  const a = audioRef.value
+  const v = videoRef.value
+  if (a && v && playerAudioSrc.value) safeSetTime(a, v.currentTime)
+}
+function onVideoTime() {
+  const a = audioRef.value
+  const v = videoRef.value
+  if (!a || !v || audioSyncing || !playerAudioSrc.value) return
+  if (Math.abs(a.currentTime - v.currentTime) > 0.4) safeSetTime(a, v.currentTime)
+}
+function onPlayerClick() {
+  // 用户手势里补一次，绕过浏览器的有声自动播放策略
+  const a = audioRef.value
+  if (a && playerAudioSrc.value && a.paused) a.play().catch(() => {})
+}
 
 const running = ref(false)
 const done = ref(false)
@@ -473,6 +607,382 @@ function ensurePlusAccess(source) {
   return true
 }
 
+// ---- 视频：分组与版本分流 ----
+const VIDEO_GROUPS = computed(() => [
+  {
+    name: '国内',
+    items: ['bing', 'bilibili', 'acfun', 'youku', 'mgtv']
+      .map((id) => videoSourceMap[id])
+      .filter(Boolean)
+  },
+  {
+    name: '国外通用',
+    items: ['yahoo', 'youtube', 'twitter'].map((id) => videoSourceMap[id]).filter(Boolean)
+  },
+  {
+    name: 'porn成人',
+    items: ['pornhub', 'thothub', 'xnxx', 'xvideos', 'xhamster', 'doll', 'cg51']
+      .map((id) => videoSourceMap[id])
+      .filter(Boolean)
+  },
+  { name: '随机', items: ['xjj'].map((id) => videoSourceMap[id]).filter(Boolean) }
+])
+
+function visibleVideoGroups() {
+  return VIDEO_GROUPS.value
+    .map((g) => ({ ...g, items: g.items.filter((s) => isPlus.value || s.tier === 'lite') }))
+    .filter((g) => g.items.length)
+}
+function visibleSimpleVideoGroups() {
+  return SIMPLE_VIDEO_GROUPS.filter((g) => isPlus.value || g.tier === 'lite')
+}
+
+function stageLabel(s) {
+  switch (s) {
+    case 'direct':
+      return '直链'
+    case 'ytdlp':
+      return 'yt-dlp'
+    case 'sniff':
+      return '服务端嗅探'
+    case 'site':
+      return '站点特判'
+    case 'douyin':
+      return '抖音'
+    case 'audio':
+      return '音频流'
+    default:
+      return s || '-'
+  }
+}
+
+function candKindLabel(c) {
+  if (c.ext === 'm3u8') return 'HLS'
+  if (c.kind === 'audio') return '音频'
+  if (c.ext && c.ext !== 'unknown') return c.ext.toUpperCase()
+  return stageLabel(c.kind) || '媒体'
+}
+
+function openExternal(url) {
+  window.open(url, '_blank', 'noopener')
+}
+
+function startPlayerDrag(e) {
+  e.preventDefault()
+  const startY = e.clientY
+  const startH = playerHeight.value
+  const move = (ev) => {
+    playerHeight.value = Math.min(800, Math.max(160, startH + (ev.clientY - startY)))
+  }
+  const up = () => {
+    document.removeEventListener('mousemove', move)
+    document.removeEventListener('mouseup', up)
+    document.body.style.cursor = ''
+  }
+  document.body.style.cursor = 'ns-resize'
+  document.addEventListener('mousemove', move)
+  document.addEventListener('mouseup', up)
+}
+
+async function vSearch() {
+  if (vSearching.value) return
+  if (!vform.keyword.trim()) {
+    ElMessage.warning('请输入关键词')
+    return
+  }
+  if (!vform.sources.length) {
+    ElMessage.warning('请至少选择一个数据源')
+    return
+  }
+  if (!isPlus.value && vform.sources.some((s) => isSourcePlus(s))) {
+    ElMessage.warning('所选视频源为 Plus 专属，请先开通 Plus')
+    return
+  }
+  vSearching.value = true
+  vResults.value = []
+  vFilteredOut.value = 0
+  try {
+    const kw = vform.keyword.trim()
+    const results = await Promise.all(
+      vform.sources.map(async (src) => {
+        try {
+          const r = await api.videoSearch({ keyword: kw, source: src, count: vform.count })
+          return r.items || []
+        } catch (e) {
+          pushVideoLog(`搜索失败 ${src}: ${e.message}`)
+          return []
+        }
+      })
+    )
+    const seen = new Set()
+    const all = results.flat().filter((i) => {
+      if (seen.has(i.url)) return false
+      seen.add(i.url)
+      return true
+    })
+    let passed = all.filter((i) => durationPass(i.duration, vform.duration))
+    vFilteredOut.value = all.length - passed.length
+    if (vform.layers.length && passed.length) {
+      const before = passed.length
+      passed = passed.filter((it) => passLayers(it, vform.layers))
+      pushVideoLog(`多层筛选: ${before} → ${passed.length} 条`)
+    }
+    vResults.value = passed
+    if (!passed.length) {
+      pushVideoLog('筛选后无匹配结果')
+      ElMessage.warning('没有符合筛选条件的视频，试试调整数据源或筛选规则')
+      return
+    }
+    pushVideoLog(
+      `视频搜索(${vform.sources.join('+')}): ${all.length} 条候选` +
+        (vFilteredOut.value ? `(按时长过滤 ${vFilteredOut.value} 条)` : '')
+    )
+  } catch (e) {
+    ElMessage.error(`搜索失败: ${e.message}`)
+    pushVideoLog(`视频搜索失败: ${e.message}`)
+  } finally {
+    vSearching.value = false
+  }
+}
+
+function vRowClick(item) {
+  vPreview(item)
+}
+
+async function vPreview(item) {
+  if (playerLoading.value) return
+  playerLoading.value = true
+  const mySession = ++playerSession.value
+  resetPlayer()
+  playerTitle.value = item.title
+  playerItemUrl.value = item.url || ''
+  pushVideoLog(`开始解析: ${item.title}`)
+  try {
+    const info = await api.videoResolve(item.url)
+    if (mySession !== playerSession.value) return
+    const direct = info.url
+    if (!direct) {
+      playerTitle.value = `${item.title} · 解析失败`
+      pushVideoLog(`解析失败: 未拿到播放地址`)
+      return
+    }
+    if (info.is_hls ?? /\.m3u8(\?|$)/i.test(direct)) {
+      // HLS 交给 hls.js（分片与子播放列表由 rewrite_playlist 逐个加签名）
+      const videoEl = videoRef.value
+      if (!videoEl) throw new Error('播放器未就绪')
+      destroyHls()
+      const Hls = await loadHls()
+      if (mySession !== playerSession.value) return
+      if (Hls.isSupported()) {
+        const hls = new Hls({ maxBufferLength: 60, enableWorker: true })
+        hlsInstance = hls
+        hls.loadSource(api.hlsPlaylistUrl(direct, info.sig))
+        hls.attachMedia(videoEl)
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (!data.fatal) return
+          pushVideoLog(`播放错误: ${data.type} ${data.details}`)
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
+          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+          else {
+            playerTitle.value = `${item.title} · 播放出错`
+            destroyHls()
+          }
+        })
+      } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        videoEl.src = api.hlsPlaylistUrl(direct, info.sig)
+      } else {
+        throw new Error('当前浏览器不支持 HLS 播放')
+      }
+      playerReady.value = true
+      playerTitle.value = `${item.title} · ${info.format || 'HLS'}`
+      pushVideoLog(`预览就绪: ${item.title} (${info.format || 'HLS'}) hls.js`)
+      return
+    }
+
+    // DASH 站音视频分离：视频流 + 音频流双元素同步播放
+    playerSrc.value = api.videoPreviewUrl(direct, info.sig)
+    if (info.audio_url && info.audio_url !== direct) {
+      playerAudioSrc.value = api.videoPreviewUrl(info.audio_url, info.audio_sig)
+      playerHint.value = '双流播放（音视频分离，已自动同步）'
+      pushVideoLog(`音视频分离: 视频 ${info.format || ''} + 音频 ${info.audio_format || ''}`)
+    } else {
+      playerHint.value = ''
+    }
+    playerReady.value = true
+    playerTitle.value = `${item.title} · ${info.format || ''}`
+    pushVideoLog(`预览就绪: ${info.title || item.title} (${info.format || ''})`)
+    await nextTick()
+    onVideoPlay()
+  } catch (e) {
+    if (mySession !== playerSession.value) return
+    playerTitle.value = `${item.title} · 解析失败`
+    pushVideoLog(`解析失败: ${e.message}`)
+    ElMessage.error(`解析失败: ${e.message}`)
+  } finally {
+    if (mySession === playerSession.value) playerLoading.value = false
+  }
+}
+
+function splitLinkLines() {
+  return (linkUrl.value || '')
+    .split(/[\r\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => /^https?:\/\//i.test(s))
+    .slice(0, 10)
+}
+
+async function resolveOneLine(raw) {
+  const isDouyin = /douyin|iesdouyin|v\.douyin/i.test(raw)
+  if (isDouyin) {
+    const d = await api.douyinParse(raw)
+    if (d.type === 'album') {
+      form.customUrls = (d.image_urls || []).join('\n')
+      ElMessage.success('抖音图集已填入图片自定义网址，请到图片模块爬取')
+      return { input: raw, type: 'album', title: d.title || '抖音图集', image_urls: d.image_urls || [], candidates: [], error: '' }
+    }
+    return {
+      input: raw,
+      type: 'video',
+      title: d.title || '抖音视频',
+      format: 'mp4',
+      stage: 'douyin',
+      source_url: raw,
+      candidates: [{ url: d.video_url, ext: 'mp4', kind: 'direct', quality: '', label: '无水印 mp4', from: 'douyin' }],
+      error: ''
+    }
+  }
+  try {
+    const info = await api.videoResolve(raw, linkMode.value)
+    const cands =
+      info.candidates && info.candidates.length
+        ? info.candidates
+        : [
+            {
+              url: info.url,
+              ext: info.is_hls ? 'm3u8' : 'mp4',
+              kind: info.stage || 'direct',
+              quality: '',
+              label: info.format || '',
+              from: info.stage || ''
+            }
+          ]
+    return {
+      input: raw,
+      type: 'video',
+      title: info.title || raw,
+      format: info.format,
+      duration: info.duration,
+      stage: info.stage || '',
+      source_url: info.source_url || raw,
+      sig: info.sig,
+      audio_url: info.audio_url,
+      audio_sig: info.audio_sig,
+      candidates: cands,
+      error: ''
+    }
+  } catch (e) {
+    return { input: raw, type: 'video', title: raw, format: '', candidates: [], error: e.message }
+  }
+}
+
+async function vResolveLink() {
+  const lines = splitLinkLines()
+  if (!lines.length) {
+    ElMessage.warning('请粘贴至少一条 http(s) 链接（每行一条）')
+    return
+  }
+  linkResolving.value = true
+  linkResults.value = []
+  linkInfo.value = null
+  try {
+    const out = []
+    for (const line of lines) out.push(await resolveOneLine(line))
+    linkResults.value = out
+    const ok = out.filter((r) => !r.error && r.candidates.length)
+    const first = ok[0]
+    if (first) {
+      linkInfo.value = {
+        title: first.title,
+        format: first.format,
+        duration: first.duration,
+        stage: first.stage,
+        candidates: first.candidates
+      }
+      if (!linkTitle.value.trim() && first.title) linkTitle.value = first.title
+      pushVideoLog(`解析成功: ${first.title} (${first.format || '未知格式'}) · ${stageLabel(first.stage)}`)
+    }
+    pushVideoLog(
+      `解析完成: ${ok.length}/${out.length} 成功` + (lines.length > 1 ? `（共 ${lines.length} 行）` : '')
+    )
+    if (!first && out.length) ElMessage.warning(`全部解析失败: ${out[0].error || '无可用地址'}`)
+  } finally {
+    linkResolving.value = false
+  }
+}
+
+// 直接播放链接解析出来的候选（签名由 resolve 时附带）
+async function vPlayCandidate(res, cand) {
+  if (!cand || !cand.url) return
+  if (cand.kind === 'audio') {
+    ElMessage.info('该候选是音频流，播放视频流即可自动带上声音')
+    return
+  }
+  const fake = {
+    title: linkTitle.value.trim() || res.title || '链接解析',
+    url: res.input || res.source_url,
+    source: 'link'
+  }
+  // 候选已是直链，跳过二次解析直接播
+  if (playerLoading.value) return
+  playerLoading.value = true
+  const mySession = ++playerSession.value
+  resetPlayer()
+  playerTitle.value = fake.title
+  playerItemUrl.value = fake.url
+  try {
+    const isHls = cand.ext === 'm3u8'
+    // play_url 是服务端按「候选自己的 URL」签好的完整地址；
+    // res.sig 签的是 info.url，只在候选就是首条时才对得上
+    const playUrl = cand.play_url || (isHls ? api.hlsPlaylistUrl(cand.url, res.sig) : api.videoPreviewUrl(cand.url, res.sig))
+    if (isHls) {
+      const videoEl = videoRef.value
+      if (!videoEl) throw new Error('播放器未就绪')
+      const Hls = await loadHls()
+      if (mySession !== playerSession.value) return
+      if (Hls.isSupported()) {
+        const hls = new Hls({ maxBufferLength: 60, enableWorker: true })
+        hlsInstance = hls
+        hls.loadSource(playUrl)
+        hls.attachMedia(videoEl)
+      } else {
+        videoEl.src = playUrl
+      }
+      playerReady.value = true
+      playerTitle.value = `${fake.title} · HLS`
+      pushVideoLog(`链接播放: HLS ${fake.title}`)
+      return
+    }
+    playerSrc.value = playUrl
+    if (res.audio_url && res.audio_url !== cand.url) {
+      playerAudioSrc.value = api.videoPreviewUrl(res.audio_url, res.audio_sig)
+      playerHint.value = '双流播放（音视频分离，已自动同步）'
+    } else {
+      playerHint.value = ''
+    }
+    playerReady.value = true
+    playerTitle.value = `${fake.title} · ${cand.label || cand.ext || ''}`
+    pushVideoLog(`链接播放: ${fake.title} (${cand.label || cand.ext || ''})`)
+    await nextTick()
+    onVideoPlay()
+  } catch (e) {
+    if (mySession !== playerSession.value) return
+    pushVideoLog(`链接播放失败: ${e.message}`)
+    ElMessage.error(`播放失败: ${e.message}`)
+  } finally {
+    if (mySession === playerSession.value) playerLoading.value = false
+  }
+}
+
 function startLeftDrag(e) {
   e.preventDefault()
   const startX = e.clientX
@@ -546,12 +1056,74 @@ function nClearResults() {
   nResults.value = []
   nReading.value = null
   nContent.value = ''
+  nChapters.value = []
+  nCurrentChapterIndex.value = 0
+  nChapterContent.value = ''
 }
 
 function nCloseReader() {
   nReading.value = null
   nContent.value = ''
   nSummary.value = ''
+  nChapters.value = []
+  nCurrentChapterIndex.value = 0
+  nChapterContent.value = ''
+}
+
+// ---- 天天看小说分类浏览 ----
+async function nToggleCategoryMode() {
+  if (nCategoryMode.value) {
+    nCategoryMode.value = false
+    nCategoryType.value = ''
+    return
+  }
+  try {
+    const r = await api.novelCategories()
+    nCategories.value = r.categories || []
+    nCategoryMode.value = true
+    nCategoryPage.value = 1
+    if (nCategories.value.length) {
+      await nBrowseCategory(nCategories.value[0].type)
+    }
+  } catch (e) {
+    ElMessage.error(`分类加载失败: ${e.message}`)
+  }
+}
+
+async function nBrowseCategory(type) {
+  nCategoryType.value = type
+  nCategoryPage.value = 1
+  nCategoryLoading.value = true
+  nResults.value = []
+  try {
+    const r = await api.novelCategory({ type, page: 1 })
+    nResults.value = r.items || []
+    pushNovelLog(`天天看小说分类[${type}]: 共 ${nResults.value.length} 篇`)
+  } catch (e) {
+    ElMessage.error(`分类浏览失败: ${e.message}`)
+  } finally {
+    nCategoryLoading.value = false
+  }
+}
+
+async function nBrowseCategoryMore() {
+  nCategoryLoading.value = true
+  try {
+    const next = nCategoryPage.value + 1
+    const r = await api.novelCategory({ type: nCategoryType.value, page: next })
+    const items = r.items || []
+    if (!items.length) {
+      ElMessage.info('没有更多了')
+    } else {
+      nCategoryPage.value = next
+      const seen = new Set(nResults.value.map((it) => it.url))
+      nResults.value.push(...items.filter((it) => !seen.has(it.url)))
+    }
+  } catch (e) {
+    ElMessage.error(`加载更多失败: ${e.message}`)
+  } finally {
+    nCategoryLoading.value = false
+  }
 }
 
 async function nRead(item) {
@@ -559,14 +1131,37 @@ async function nRead(item) {
   nContentLoading.value = true
   nReading.value = item
   nContent.value = ''
+  nChapters.value = []
+  nCurrentChapterIndex.value = 0
+  nChapterContent.value = ''
   try {
-    const r = await api.novelContent(item.url)
-    nContent.value = r.content || ''
-    if (!nContent.value) ElMessage.warning('未提取到正文')
+    // 先尝试获取目录
+    nChaptersLoading.value = true
+    try {
+      const chr = await api.novelChapters(item.url)
+      if (chr.chapters && chr.chapters.length > 0) {
+        nChapters.value = chr.chapters
+        // 自动打开第一章
+        await nLoadChapter(0)
+      } else {
+        // 无目录，直接读取当前URL内容
+        const r = await api.novelContent(item.url)
+        nContent.value = r.content || ''
+        nChapterContent.value = ''
+        if (!nContent.value) ElMessage.warning('未提取到正文')
+      }
+    } catch {
+      // 目录获取失败，直接读取内容
+      const r = await api.novelContent(item.url)
+      nContent.value = r.content || ''
+      nChapterContent.value = ''
+      if (!nContent.value) ElMessage.warning('未提取到正文')
+    }
   } catch (e) {
     ElMessage.error(`阅读失败: ${e.message}`)
   } finally {
     nContentLoading.value = false
+    nChaptersLoading.value = false
     if (window.innerWidth <= 991) {
       await nextTick()
       document.querySelector('.player-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -574,11 +1169,75 @@ async function nRead(item) {
   }
 }
 
+async function nLoadChapter(index) {
+  if (index < 0 || index >= nChapters.value.length) return
+  nCurrentChapterIndex.value = index
+  nContentLoading.value = true
+  nContent.value = ''
+  nChapterContent.value = ''
+  try {
+    const ch = nChapters.value[index]
+    const r = await api.novelContent(ch.url)
+    nChapterContent.value = r.content || ''
+    nContent.value = nChapterContent.value
+    if (!nContent.value) ElMessage.warning('未提取到正文')
+    // 复位阅读容器滚动条
+    const el = document.querySelector('.novel-reader-body')
+    if (el) el.scrollTop = 0
+  } catch (e) {
+    ElMessage.error(`章节加载失败: ${e.message}`)
+  } finally {
+    nContentLoading.value = false
+  }
+}
+
+function nPrevChapter() {
+  if (nCurrentChapterIndex.value > 0) {
+    nLoadChapter(nCurrentChapterIndex.value - 1)
+  }
+}
+
+function nNextChapter() {
+  if (nCurrentChapterIndex.value < nChapters.value.length - 1) {
+    nLoadChapter(nCurrentChapterIndex.value + 1)
+  }
+}
+
+function nSetBgMode(mode) {
+  nReaderSettings.bgMode = mode
+  localStorage.setItem('novel_bgMode', mode)
+}
+
+function nSetFontSize(size) {
+  nReaderSettings.fontSize = size
+  localStorage.setItem('novel_fontSize', String(size))
+}
+
+function nSetLineHeight(v) {
+  nReaderSettings.lineHeight = v
+  localStorage.setItem('novel_lineHeight', String(v))
+}
+
+const nReaderBgClass = computed(() => {
+  return `reader-bg-${nReaderSettings.bgMode}`
+})
+
+const nCurrentChapterName = computed(() => {
+  if (nChapters.value.length > 0 && nChapters.value[nCurrentChapterIndex.value]) {
+    return nChapters.value[nCurrentChapterIndex.value].title
+  }
+  return ''
+})
+
+const nHasChapters = computed(() => nChapters.value.length > 1)
+
+
 const nWhole = reactive({ running: false, done: 0, total: 0 })
 const nWholeController = ref(null)
 
 function nIsBiquga(item) {
-  return (item.source || '').toLowerCase() === 'biquga'
+  const s = (item.source || '').toLowerCase()
+  return s === 'biquga' || s === 'bqgnovels' || s === 'txt800' || s === 'alicesw'
 }
 
 async function nDownloadWhole(item) {
@@ -782,6 +1441,8 @@ async function nStartDownload() {
 onBeforeUnmount(() => {
   controller.value?.abort()
   cWholeController.value?.abort()
+  playerSession.value++
+  destroyHls()
 })
 </script>
 
@@ -790,10 +1451,10 @@ onBeforeUnmount(() => {
     <header class="crawl-hero">
       <div>
         <span class="eyebrow">MULTI-SOURCE RESOURCE FINDER</span>
-        <h1>{{ mode === 'image' ? '图片资源' : mode === 'novel' ? '小说资源' : '漫画资源' }}</h1>
-        <p>{{ mode === 'image' ? '跨多个图片来源检索、筛选并批量保存资源。' : mode === 'novel' ? '检索小说内容，在线阅读并保存个人学习资料。' : '检索漫画作品，预览页面并保存开放内容。' }}</p>
+        <h1>{{ heroTitle }}</h1>
+        <p>{{ heroDesc }}</p>
       </div>
-      <div class="hero-mark"><span>{{ mode === 'image' ? 'IMG' : mode === 'novel' ? 'TXT' : 'COMIC' }}</span></div>
+      <div class="hero-mark"><span>{{ heroMark }}</span></div>
     </header>
     <div class="left" :style="{ width: leftWidth + 'px' }">
       <el-card shadow="never">
@@ -894,7 +1555,24 @@ onBeforeUnmount(() => {
 
         <el-form v-if="mode === 'novel'" label-width="80px" label-position="left">
           <el-form-item label="关键词">
-            <el-input v-model="nform.keyword" clearable />
+            <div class="novel-kw-row">
+              <el-input v-model="nform.keyword" clearable />
+              <el-button
+                size="small"
+                :type="nCategoryMode ? 'warning' : 'default'"
+                @click="nToggleCategoryMode"
+                :loading="nCategoryLoading"
+              >
+                {{ nCategoryMode ? '退出分类' : '分类浏览' }}
+              </el-button>
+            </div>
+            <div v-if="nCategoryMode && nCategories.length" class="novel-cat-bar">
+              <span class="novel-cat-label">内容分类</span>
+              <el-select v-model="nCategoryType" size="small" style="width: 120px" @change="nBrowseCategory">
+                <el-option v-for="c in nCategories" :key="c.type || 'latest'" :label="c.name" :value="c.type" />
+              </el-select>
+              <el-button size="small" text @click="nBrowseCategoryMore">下一页</el-button>
+            </div>
           </el-form-item>
           <el-form-item label="多层筛选">
             <MultiLayerFilter v-model="nform.layers" />
@@ -1068,6 +1746,180 @@ onBeforeUnmount(() => {
           </div>
         </el-form>
 
+        <el-form v-if="mode === 'video'" label-width="80px" label-position="left" class="video-form">
+          <el-tabs v-model="vTab" class="video-tabs">
+            <el-tab-pane label="搜索" name="search">
+              <el-form-item label="关键词">
+                <el-input v-model="vform.keyword" clearable placeholder="视频关键词（随机源忽略关键词）" @keyup.enter="vSearch" />
+              </el-form-item>
+              <el-form-item label="数据源">
+                <div class="source-groups">
+                  <div v-if="viewMode === 'simple'" class="simple-groups">
+                    <div v-for="g in visibleSimpleVideoGroups()" :key="g.id" class="simple-group">
+                      <el-tooltip :open-delay="800" placement="top" effect="light">
+                        <template #content>
+                          <div class="tip">
+                            <div class="tip-title">
+                              {{ g.label }}
+                              <el-tag size="small" :type="g.tier === 'plus' ? 'warning' : 'success'" effect="plain">
+                                {{ g.tier === 'plus' ? 'Plus' : 'Lite' }}
+                              </el-tag>
+                            </div>
+                            <div class="tip-desc">{{ g.desc }}</div>
+                          </div>
+                        </template>
+                        <el-checkbox
+                          :model-value="groupChecked(g, vform.sources)"
+                          :indeterminate="groupIndeterminate(g, vform.sources)"
+                          @change="toggleGroup(g, vform.sources, (v) => (vform.sources = v))"
+                        >
+                          {{ g.label }}（{{ g.sources.length }}个站）
+                        </el-checkbox>
+                      </el-tooltip>
+                    </div>
+                  </div>
+                  <div v-else class="source-groups">
+                    <div v-for="group in visibleVideoGroups()" :key="group.name" class="source-group">
+                      <div class="group-name">{{ group.name }}</div>
+                      <el-checkbox-group v-model="vform.sources" class="group-checks">
+                        <span v-for="s in group.items" :key="s.id" class="src-item">
+                          <el-tooltip :open-delay="800" placement="top" effect="light">
+                            <template #content>
+                              <div class="tip">
+                                <div class="tip-title">
+                                  {{ s.label }}
+                                  <el-tag
+                                    size="small"
+                                    :type="s.tier === 'plus' ? 'warning' : 'success'"
+                                    effect="plain"
+                                  >
+                                    {{ s.tier === 'plus' ? 'Plus' : 'Lite' }}
+                                  </el-tag>
+                                </div>
+                                <div class="tip-desc">{{ s.desc }}</div>
+                              </div>
+                            </template>
+                            <el-checkbox :value="s.id">
+                              <span :class="{ adult: s.adult }">{{ s.label }}</span>
+                            </el-checkbox>
+                          </el-tooltip>
+                        </span>
+                      </el-checkbox-group>
+                    </div>
+                  </div>
+                </div>
+              </el-form-item>
+              <el-form-item label="数量">
+                <el-slider v-model="vform.count" :min="1" :max="30" show-input />
+              </el-form-item>
+              <el-form-item label="时长">
+                <el-radio-group v-model="vform.duration">
+                  <el-radio value="any">不限</el-radio>
+                  <el-radio value="short">短 (&lt;10分)</el-radio>
+                  <el-radio value="medium">中 (10-60分)</el-radio>
+                  <el-radio value="long">长 (&gt;60分)</el-radio>
+                </el-radio-group>
+                <span v-if="vform.sources.includes('pornhub') && vform.duration !== 'any'" class="hint">
+                  Pornhub 结果无时长，需选「不限」
+                </span>
+              </el-form-item>
+              <el-form-item v-if="viewMode === 'detail'" label="多层筛选">
+                <MultiLayerFilter v-model="vform.layers" />
+              </el-form-item>
+              <div class="actions">
+                <el-button type="primary" :loading="vSearching" @click="vSearch">搜索</el-button>
+                <span v-if="vFilteredOut" class="hint">按时长过滤 {{ vFilteredOut }} 条</span>
+              </div>
+              <div v-if="vResults.length" class="novel-res vresults">
+                <div class="novel-res-head">
+                  <span>候选 {{ vResults.length }} 条（点击任意一行即可右侧播放）</span>
+                  <el-button size="small" link @click="vResults = []">清空</el-button>
+                </div>
+                <div class="novel-res-list">
+                  <div
+                    v-for="item in vResults"
+                    :key="item.url"
+                    class="novel-res-item vres-item"
+                    :class="{ active: playerItemUrl === item.url }"
+                    @click="vRowClick(item)"
+                  >
+                    <el-tooltip :content="item.title" placement="top-start" :show-after="300">
+                      <span class="novel-res-title">{{ item.title }}</span>
+                    </el-tooltip>
+                    <span class="vres-dur">{{ formatDur(item.duration) || item.duration_text || '' }}</span>
+                    <el-tag size="small" type="info" effect="plain">{{ item.source }}</el-tag>
+                    <el-button size="small" link type="primary" @click.stop="vPreview(item)">播放</el-button>
+                    <el-button size="small" link @click.stop="openExternal(item.url)">官网</el-button>
+                  </div>
+                </div>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="链接解析" name="link">
+              <el-form-item label="链接">
+                <el-input
+                  v-model="linkUrl"
+                  type="textarea"
+                  :rows="3"
+                  placeholder="粘贴视频链接，每行一条（支持多行批量解析）"
+                />
+              </el-form-item>
+              <el-form-item label="解析方式">
+                <el-select v-model="linkMode" style="width: 180px">
+                  <el-option label="自动（推荐）" value="auto" />
+                  <el-option label="yt-dlp" value="ytdlp" />
+                  <el-option label="服务端嗅探" value="server" />
+                  <el-option label="浏览器抓包（本部署未启用）" value="browser" disabled />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="标题">
+                <el-input v-model="linkTitle" clearable placeholder="留空则用解析出的标题" />
+              </el-form-item>
+              <div class="actions">
+                <el-button type="primary" :loading="linkResolving" @click="vResolveLink">解析</el-button>
+              </div>
+              <div v-if="linkInfo" class="link-info">
+                <div>标题: {{ linkInfo.title }}</div>
+                <div v-if="linkInfo.duration">时长: {{ formatDur(linkInfo.duration) }}</div>
+                <div>
+                  格式: {{ linkInfo.format }}
+                  <span v-if="linkInfo.stage"> · 解析: {{ stageLabel(linkInfo.stage) }}</span>
+                </div>
+              </div>
+              <div v-if="linkResults.length" class="link-results">
+                <div v-for="(r, ri) in linkResults" :key="ri" class="link-result">
+                  <div class="link-result-head">
+                    <el-tag
+                      size="small"
+                      effect="light"
+                      :type="r.error ? 'danger' : r.candidates.length ? 'success' : 'info'"
+                    >
+                      {{ r.error ? '失败' : stageLabel(r.stage) }}
+                    </el-tag>
+                    <span class="link-result-title">{{ r.title }}</span>
+                    <span v-if="r.format" class="link-result-meta">{{ r.format }}</span>
+                  </div>
+                  <div v-if="r.error" class="link-result-error">{{ r.error }}</div>
+                  <div v-else-if="r.type === 'album'" class="link-result-meta">
+                    图集 {{ (r.image_urls || []).length }} 张，已填入图片自定义网址
+                  </div>
+                  <div v-else class="cand-list">
+                    <div v-for="(c, ci) in r.candidates" :key="ci" class="cand-row">
+                      <el-tag size="small" effect="plain" :type="c.ext === 'm3u8' ? 'warning' : 'success'">
+                        {{ candKindLabel(c) }}
+                      </el-tag>
+                      <span v-if="c.quality" class="cand-quality">{{ c.quality }}</span>
+                      <span class="cand-url" :title="c.url">{{ c.url }}</span>
+                      <el-button size="small" type="primary" link @click="vPlayCandidate(r, c)">播放</el-button>
+                      <el-button size="small" link @click="openExternal(c.url)">打开</el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </el-form>
+
         <div class="actions">
           <el-button
             v-if="mode === 'image'"
@@ -1144,20 +1996,90 @@ onBeforeUnmount(() => {
         </div>
       </el-card>
 
-      <el-card v-if="mode === 'novel'" shadow="never" class="player-card">
+      <el-card
+        v-if="mode === 'novel'"
+        shadow="never"
+        class="player-card reader-card"
+        :class="['reader-card-wrap', nReaderBgClass]"
+      >
         <template #header>
-          <div class="player-head">
+          <div class="reader-header">
             <span class="player-title">
-              阅读
-              <span v-if="nReading" class="dim">{{ nReading.title }}</span>
+              <el-icon><Reading /></el-icon> 阅读器
+              <span v-if="nReading" class="dim reader-book-title">{{ nReading.title }}</span>
             </span>
+            <span v-if="nReading && nReading.author" class="reader-author">作者：{{ nReading.author }}</span>
             <el-button v-if="nReading" class="player-close" size="small" link @click="nCloseReader">关闭</el-button>
           </div>
         </template>
+        <!-- 阅读工具栏 -->
+        <div v-if="nReading" class="reader-toolbar">
+          <div class="reader-toolbar-left">
+            <el-select
+              v-if="nHasChapters"
+              v-model="nCurrentChapterIndex"
+              size="small"
+              class="reader-chapter-select"
+              @change="nLoadChapter"
+            >
+              <el-option
+                v-for="(ch, i) in nChapters"
+                :key="ch.url"
+                :label="`${i + 1}. ${ch.title}`"
+                :value="i"
+              />
+            </el-select>
+            <el-button
+              v-if="nHasChapters"
+              size="small"
+              :disabled="nCurrentChapterIndex <= 0"
+              @click="nPrevChapter"
+            >
+              <el-icon><ArrowLeft /></el-icon> 上一章
+            </el-button>
+            <el-button
+              v-if="nHasChapters"
+              size="small"
+              :disabled="nCurrentChapterIndex >= nChapters.length - 1"
+              @click="nNextChapter"
+            >
+              下一章 <el-icon><ArrowRight /></el-icon>
+            </el-button>
+            <span v-if="nCurrentChapterName" class="reader-chapter-name">{{ nCurrentChapterName }}</span>
+          </div>
+          <div class="reader-toolbar-right">
+            <el-tooltip content="字号" placement="top">
+              <div class="reader-font-group">
+                <el-button size="small" circle @click="nSetFontSize(Math.max(12, nReaderSettings.fontSize - 2))">A-</el-button>
+                <span class="reader-font-val">{{ nReaderSettings.fontSize }}</span>
+                <el-button size="small" circle @click="nSetFontSize(Math.min(32, nReaderSettings.fontSize + 2))">A+</el-button>
+              </div>
+            </el-tooltip>
+            <el-tooltip content="行距" placement="top">
+              <div class="reader-font-group">
+                <el-button size="small" circle @click="nSetLineHeight(Math.max(1.2, +(nReaderSettings.lineHeight - 0.2).toFixed(1)))">疏</el-button>
+                <span class="reader-font-val">{{ nReaderSettings.lineHeight }}</span>
+                <el-button size="small" circle @click="nSetLineHeight(Math.min(3.2, +(nReaderSettings.lineHeight + 0.2).toFixed(1)))">密</el-button>
+              </div>
+            </el-tooltip>
+            <el-tooltip content="背景" placement="top">
+              <div class="reader-bg-group">
+                <button class="reader-bg-btn bg-day" :class="{ active: nReaderSettings.bgMode === 'day' }" @click="nSetBgMode('day')" title="白天"></button>
+                <button class="reader-bg-btn bg-sepia" :class="{ active: nReaderSettings.bgMode === 'sepia' }" @click="nSetBgMode('sepia')" title="羊皮纸"></button>
+                <button class="reader-bg-btn bg-night" :class="{ active: nReaderSettings.bgMode === 'night' }" @click="nSetBgMode('night')" title="夜间"></button>
+              </div>
+            </el-tooltip>
+          </div>
+        </div>
         <div v-if="nContentLoading" class="preview-loading">加载正文中...</div>
         <template v-else-if="nContent">
           <div v-if="nSummary" class="novel-summary">{{ nSummary }}</div>
-          <div class="novel-content">{{ nContent }}</div>
+          <div class="novel-reader-body">
+            <div
+              class="novel-content"
+              :style="{ fontSize: nReaderSettings.fontSize + 'px', lineHeight: nReaderSettings.lineHeight }"
+            >{{ nContent }}</div>
+          </div>
           <div class="novel-actions">
             <el-button type="primary" :loading="nSaving" @click="nSaveTxt">下载为 txt</el-button>
             <el-button :loading="nSummarizing" @click="nSummarize">AI 摘要</el-button>
@@ -1212,6 +2134,65 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <el-empty v-else description="点击左侧漫画预览" :image-size="60" />
+      </el-card>
+
+      <el-card v-if="mode === 'video'" shadow="never" class="progress-card">
+        <template #header>播放日志</template>
+        <el-empty v-if="!videoLogs.length" description="搜索并点击结果后，这里会显示解析与播放过程" :image-size="60" />
+        <div v-else class="logs vlogs">
+          <div v-for="(l, i) in videoLogs" :key="i" class="log-line">{{ l }}</div>
+        </div>
+      </el-card>
+
+      <el-card v-show="mode === 'video'" shadow="never" class="player-card preview-card">
+        <template #header>
+          放映室
+          <span v-if="playerTitle" class="dim">{{ playerTitle }}</span>
+        </template>
+        <div v-if="playerLoading" class="preview-loading">解析视频中，请稍候...</div>
+        <div v-show="playerReady" class="player-box" @click="onPlayerClick">
+          <div class="player-wrap" :style="{ height: playerHeight + 'px' }">
+            <video
+              ref="videoRef"
+              :src="playerSrc || undefined"
+              controls
+              autoplay
+              playsinline
+              class="player-video"
+              @play="onVideoPlay"
+              @pause="onVideoPause"
+              @seeked="onVideoSeek"
+              @timeupdate="onVideoTime"
+            ></video>
+            <audio
+              v-if="playerAudioSrc"
+              ref="audioRef"
+              :src="playerAudioSrc"
+              preload="auto"
+              class="player-audio"
+            ></audio>
+          </div>
+          <div class="player-tools">
+            <span v-if="playerHint" class="hint">{{ playerHint }}</span>
+            <el-button
+              v-if="playerItemUrl"
+              size="small"
+              type="primary"
+              plain
+              @click.stop="openExternal(playerItemUrl)"
+            >
+              在官网打开（本页预览可能受限）
+            </el-button>
+          </div>
+          <div class="player-handle" title="拖动调整高度" @mousedown="startPlayerDrag">
+            <span class="handle-grip"></span>
+          </div>
+        </div>
+        <el-empty
+          v-show="!playerLoading && !playerReady"
+          description="点击左侧搜索结果任意一行即可播放"
+          :image-size="60"
+        />
       </el-card>
 
       <el-card shadow="never" v-if="images.length">
@@ -1269,6 +2250,26 @@ onBeforeUnmount(() => {
 }
 .player-box {
   position: relative;
+}
+.novel-kw-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.novel-kw-row .el-input {
+  flex: 1;
+}
+.novel-cat-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.novel-cat-label {
+  font-size: 12px;
+  color: var(--text-sub);
+  white-space: nowrap;
 }
 .novel-res {
   margin-top: 12px;
@@ -1383,17 +2384,130 @@ onBeforeUnmount(() => {
   float: right;
   margin-top: -2px;
 }
-.novel-content {
-  max-height: 480px;
+.reader-card :deep(.el-card__body) {
+  padding: 22px;
+}
+.reader-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.reader-book-title {
+  font-weight: 600;
+}
+.reader-author {
+  font-size: 12px;
+  color: #8b7355;
+}
+.reader-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #e5e0d8;
+  flex-wrap: wrap;
+}
+.reader-toolbar-left,
+.reader-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.reader-chapter-select {
+  width: 200px;
+}
+.reader-chapter-name {
+  font-size: 13px;
+  color: #6b7280;
+  margin-left: 8px;
+}
+.reader-font-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.reader-font-val {
+  font-size: 12px;
+  color: #888;
+  min-width: 24px;
+  text-align: center;
+}
+.reader-bg-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.reader-bg-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #ccc;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.reader-bg-btn.active {
+  border-color: #d97706;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.3);
+}
+.bg-day {
+  background: #ffffff;
+}
+.bg-sepia {
+  background: #f5f0e8;
+}
+.bg-night {
+  background: #1a1a2e;
+}
+.novel-reader-body {
+  max-height: 65vh;
   overflow-y: auto;
+  border-radius: 4px;
+}
+.novel-content {
+  border: 0;
+  border-radius: 4px;
+  padding: 28px clamp(20px, 5vw, 72px);
+  box-shadow: inset 0 0 50px rgba(120, 83, 31, 0.07);
+  font: Georgia, 'Noto Serif SC', serif;
   white-space: pre-wrap;
-  font-size: 14px;
-  line-height: 1.9;
+}
+/* Day mode */
+.reader-bg-day .novel-content {
   color: #303133;
-  background: #fafafa;
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  padding: 14px 16px;
+  background: #ffffff;
+}
+.reader-bg-day .novel-reader-body {
+  background: #f8f9fa;
+}
+/* Sepia mode */
+.reader-bg-sepia .novel-content {
+  color: #3f3528;
+  background: #fffdf6;
+}
+.reader-bg-sepia .novel-reader-body {
+  background: #f8f4ec;
+}
+/* Night mode */
+.reader-bg-night .novel-content {
+  color: #d4cfc4;
+  background: #1a1a2e;
+}
+.reader-bg-night .novel-reader-body {
+  background: #16162a;
+}
+.reader-bg-night .reader-toolbar {
+  border-bottom-color: #2a2a4a;
+}
+.reader-bg-night .reader-chapter-name {
+  color: #888;
+}
+[data-theme='dark'] .novel-content {
+  color: #ded5c6;
+  background: #211f1b;
 }
 .novel-actions {
   margin-top: 10px;
@@ -1608,54 +2722,6 @@ onBeforeUnmount(() => {
   font-size: 12px;
   cursor: help;
 }
-.vtasks {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.vtask {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  padding: 8px 10px;
-}
-.vtask-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.vtask-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-.vtask-status {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: #909399;
-}
-.vtask-status.saved {
-  color: #67c23a;
-}
-.vtask-status.error {
-  color: #f56c6c;
-}
-.vtask-status.canceled {
-  color: #909399;
-}
-.vtask-err {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #f56c6c;
-  word-break: break-all;
-}
-.vtask-sum {
-  font-size: 13px;
-  color: #606266;
-}
 .preview-loading {
   text-align: center;
   color: #909399;
@@ -1859,5 +2925,61 @@ onBeforeUnmount(() => {
   .hero-mark { display: none; }
   .right { margin-top: 16px; }
 }
+
+/* ---- 视频 ---- */
+.video-form { width: 100%; }
+.vresults { margin-top: 12px; }
+.vres-item { cursor: pointer; }
+.vres-item:hover { background: rgba(37, 99, 235, 0.06); }
+.vres-item.active { background: rgba(37, 99, 235, 0.12); }
+.vres-item .novel-res-title { flex: 1; min-width: 0; }
+.link-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+.link-result {
+  border: 1px solid var(--border, #ebeef5);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--card-soft, #f5f7fa);
+}
+.link-result-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.link-result-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-result-meta { color: var(--text-sub, #909399); font-size: 12px; }
+.link-result-error { color: #f56c6c; font-size: 12px; margin-top: 6px; word-break: break-all; }
+.cand-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.cand-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+.cand-quality { flex-shrink: 0; color: var(--text-sub, #909399); }
+.cand-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-sub, #909399);
+}
+.vlogs { max-height: 300px; overflow-y: auto; }
+.player-box { position: relative; }
+.player-tools { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+/* 音频元素不参与显示，但仍需留在 DOM 中发声 */
+.player-audio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.progress-card, .preview-card { min-width: 0; }
 
 </style>

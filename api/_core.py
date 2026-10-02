@@ -189,6 +189,14 @@ def api_search(keyword, source, page, count=20):
         has_more = bool(items)
     elif source == "hhe62":
         items, has_more = search_maccms_pic_page(keyword, max(page - 1, 0), count=count)
+    elif source == "cg51":
+        from cg51_svc import search_album_images
+
+        items, has_more = search_album_images(keyword, page, count=count)
+    elif source in ("dogceo", "catapi", "bingwp", "bingbg", "picsum"):
+        from random_svc import fetch_images
+
+        items, has_more = fetch_images(source, page, count)
     else:
         raise ValueError("不支持的数据源: " + source)
     if source in ("pornhub-albums", "pornpics", "asiantolick", "foamgirl"):

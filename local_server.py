@@ -12,31 +12,8 @@ PUBLIC = os.path.join(ROOT, "public")
 sys.path.insert(0, API)
 sys.path.insert(0, ROOT)
 
-ROUTES = {
-    "search": "search",
-    "page-images": "page_images",
-    "proxy": "proxy",
-    "blob-upload": "blob_upload",
-    "blob-cleanup": "blob_cleanup",
-    "novel-search": "novel-search",
-    "novel-content": "novel-content",
-    "novel-chapters": "novel-chapters",
-    "comic-search": "comic-search",
-    "comic-pages": "comic-pages",
-    "verify": "verify",
-    "issue-code": "issue-code",
-    "ds-summarize": "ds-summarize",
-    "ds-filter": "ds-filter",
-    "ds-clean": "ds-clean",
-    "music-sources": "music-sources",
-    "music-search": "music-search",
-    "music-preview": "music-preview",
-    "music-download": "music-download",
-    "book-sources": "book-sources",
-    "book-search": "book-search",
-    "book-download": "book-download",
-    "file-proxy": "file-proxy",
-}
+# 路由表与 Vercel 线上保持同一份真源（api/dispatcher.py），避免两处漂移。
+from dispatcher import ROUTES
 
 MIME = {
     ".html": "text/html; charset=utf-8",

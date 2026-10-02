@@ -23,6 +23,8 @@ ROUTES = {
     "novel-search": "novel-search",
     "novel-content": "novel-content",
     "novel-chapters": "novel-chapters",
+    "novel-categories": "novel-categories",
+    "novel-category": "novel-category",
     "comic-search": "comic-search",
     "comic-pages": "comic-pages",
     "verify": "verify",
@@ -38,6 +40,13 @@ ROUTES = {
     "book-search": "book-search",
     "book-download": "book-download",
     "file-proxy": "file-proxy",
+    # 视频：搜索 / 解析 / 播放（Tier1，无下载转码）
+    "video-search": "video-search",
+    "video-resolve": "video-resolve",
+    "video-preview": "video-preview",
+    "hls-playlist": "hls-playlist",
+    "hls-seg": "hls-seg",
+    "douyin-parse": "douyin-parse",
 }
 
 _loaded = {}

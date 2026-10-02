@@ -87,8 +87,26 @@ def is_plus_source(source):
         "pornpics", "photos18", "asiantolick", "pornhub", "pornhub-albums", "xxknit",
         "aaanovel", "1000novel", "xbookcn", "hhhbook", "canovel", "h528", "69story", "alicesw",
         "bdsmcafe", "chyoa",
+        # 图片源（S1）：51吃瓜是成人写真图站
+        "cg51",
     }
     return source in plus
+
+
+def is_plus_video_source(source):
+    """哪些视频源属于 Plus 专属。
+
+    判定标准：色情/成人站。jable 已整源移除（依赖浏览器），
+    doll 保留搜索但解析走 yt-dlp 回落。
+
+    Lite（免费）视频源：bing / bilibili / acfun / youku / mgtv /
+    yahoo / youtube / twitter / xjj / link。
+    """
+    plus = {
+        "pornhub", "thothub", "xnxx", "xvideos",
+        "xhamster", "doll", "cg51",
+    }
+    return (source or "").strip().lower() in plus
 
 
 def is_plus_comic():
