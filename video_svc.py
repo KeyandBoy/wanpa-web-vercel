@@ -165,79 +165,52 @@ def _bili_key(target):
     return None
 
 
-def _url_page(url):
-    """取 /video/xxx?p=2 的分 P 序号（1 起）"""
-    try:
-        return max(1, int((parse_qs(urlparse(url).query).get("p") or ["1"])[0] or 1))
-    except Exception:
-        return 1
+def _resolve_bilibili(page_url):
+    """B站解析：curl_cffi 抓视频页，读内嵌的 window.__playinfo__ 拿 DASH 双流。
 
-
-def _bili_json(sess, url, step, **kw):
-    """取 bilibili API 的 JSON；非 JSON 时把状态码和响应片段带进错误信息。
-
-    线上排查发现某一步返回了空体/HTML，光有 JSONDecodeError 定不了位。
-    """
-    r = sess.get(url, **kw)
-    txt = (r.text or "").lstrip()
-    if not txt.startswith("{"):
-        raise ValueError("%s: HTTP %s 返回非JSON %r" % (step, r.status_code, txt[:120]))
-    try:
-        return r.json()
-    except Exception as e:
-        raise ValueError("%s: JSON解析失败 %s | %r" % (step, e, txt[:120]))
-
-
-def _resolve_bilibili(page_url, page=1):
-    """B站走 api.bilibili.com 的 view + playurl(DASH)。
-
-    yt-dlp 抓 /video/ 页面会被 B 站 412 反爬拦截（Vercel 机房 IP 更易触发），
-    但 api.bilibili.com 不拦；且与 search_bilibili 共用 curl_cffi 的 TLS 指纹
-    伪装通道。返回结构复用 _result_from_ytdlp，前端按「视频+音频双流」同步播放。
+    不走 api.bilibili.com 的 view/playurl —— 实测那两个端点对机房 IP 稳定返回
+    412 风控页；网页端校验的是 TLS 指纹，curl_cffi 伪装 chrome 能过，而 yt-dlp
+    的普通 TLS 会间歇性 412。分 P（?p=N）由页面自行返回对应分 P 的 playinfo，
+    无需另查 cid。返回结构复用 _result_from_ytdlp，前端按双元素同步播放。
     """
     from curl_cffi import requests as cr
 
     sess = cr.Session(impersonate="chrome131", headers={"User-Agent": _UA})
-    ref = {"Referer": "https://www.bilibili.com/"}
-    try:
-        sess.get("https://www.bilibili.com/", timeout=12)  # 预热 cookie
-    except Exception as e:
-        raise ValueError("预热: %s" % e)
-
     target = page_url
     if "b23.tv" in urlparse(page_url).netloc:
         target = str(sess.get(page_url, allow_redirects=True, timeout=12).url)
-    key = _bili_key(target)
-    if not key:
+    if not _bili_key(target):
         raise ValueError("不是 B站视频链接")
 
-    view = _bili_json(sess, "https://api.bilibili.com/x/web-interface/view",
-                      "view", params=key, headers=ref, timeout=15)
-    if view.get("code") != 0:
-        raise ValueError("view: %s" % (view.get("message") or view.get("code")))
-    data = view.get("data") or {}
-    cid = data.get("cid")
-    pages = data.get("pages") or []
-    if pages:
-        idx = max(1, min(int(page or 1), len(pages)))
-        cid = pages[idx - 1].get("cid") or cid
-    if not cid:
-        raise ValueError("view: 缺少 cid")
+    r = sess.get(target, timeout=20, headers={
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Referer": "https://www.bilibili.com/",
+    })
+    if r.status_code != 200:
+        raise ValueError("页面 HTTP %s" % r.status_code)
+    html = r.text or ""
+    m = re.search(r"window\.__playinfo__\s*=\s*(\{.*?\})\s*</script>", html, re.S)
+    if not m:
+        raise ValueError("页面未内嵌 __playinfo__（可能被风控或页面结构变更）")
+    try:
+        meta = json.loads(m.group(1))
+    except Exception as e:
+        raise ValueError("__playinfo__ 解析失败: %s" % e)
 
-    params = {}
-    if key.get("bvid"):
-        params["bvid"] = key["bvid"]
-    if key.get("aid"):
-        params["avid"] = key["aid"]
-    params.update({"cid": cid, "qn": 80, "fnval": 16, "fnver": 0, "fourk": 1})
-    play = _bili_json(sess, "https://api.bilibili.com/x/player/playurl",
-                      "playurl", params=params, headers=ref, timeout=15)
-    if play.get("code") != 0:
-        raise ValueError("playurl: %s" % (play.get("message") or play.get("code")))
-    dash = ((play.get("data") or {}).get("dash")) or {}
+    title = ""
+    tm = re.search(r"<title>(.*?)</title>", html, re.S)
+    if tm:
+        title = re.sub(r"[_\-|]\s*哔哩哔哩.*$", "", tm.group(1)).strip()
+    duration = None
+    dm = re.search(r'"videoData"\s*:\s*\{.{0,4000}?"duration":\s*(\d+)', html, re.S)
+    if dm:
+        duration = int(dm.group(1))
+
+    dash = ((meta.get("data") or {}).get("dash")) or {}
     vlist = [v for v in (dash.get("video") or []) if v.get("baseUrl") or v.get("base_url")]
     if not vlist:
-        raise ValueError("playurl: 无可用视频流")
+        raise ValueError("页面无 DASH 流")
     ok = [v for v in vlist if (v.get("height") or 0) <= MAX_HEIGHT] or vlist
     best = max(ok, key=lambda v: ((v.get("height") or 0), (v.get("bandwidth") or 0)))
     height = best.get("height") or 0
@@ -254,8 +227,8 @@ def _resolve_bilibili(page_url, page=1):
                 "ext": "m4a", "height": 0, "protocol": "https",
                 "vcodec": "none", "acodec": "mp4a"}
     info = {
-        "title": data.get("title") or "",
-        "duration": data.get("duration"),
+        "title": title or "",
+        "duration": duration,
         "formats": [vfmt],
         "requested_formats": [vfmt] + ([afmt] if afmt else []),
     }
@@ -459,7 +432,7 @@ def resolve_video(url, mode="auto"):
     # S1b: B站特判（yt-dlp 抓页面会被 412 拦，改走 api.bilibili.com）
     if mode in ("auto", "ytdlp") and _is_bilibili_page(url):
         try:
-            return _resolve_bilibili(url, page=_url_page(url))
+            return _resolve_bilibili(url)
         except Exception as e:
             errors.append(f"bilibili 特判: {e}")
             # 特判失败不中断，让下面的 yt-dlp 再试一次
