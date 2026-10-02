@@ -173,6 +173,21 @@ def _url_page(url):
         return 1
 
 
+def _bili_json(sess, url, step, **kw):
+    """取 bilibili API 的 JSON；非 JSON 时把状态码和响应片段带进错误信息。
+
+    线上排查发现某一步返回了空体/HTML，光有 JSONDecodeError 定不了位。
+    """
+    r = sess.get(url, **kw)
+    txt = (r.text or "").lstrip()
+    if not txt.startswith("{"):
+        raise ValueError("%s: HTTP %s 返回非JSON %r" % (step, r.status_code, txt[:120]))
+    try:
+        return r.json()
+    except Exception as e:
+        raise ValueError("%s: JSON解析失败 %s | %r" % (step, e, txt[:120]))
+
+
 def _resolve_bilibili(page_url, page=1):
     """B站走 api.bilibili.com 的 view + playurl(DASH)。
 
@@ -184,7 +199,10 @@ def _resolve_bilibili(page_url, page=1):
 
     sess = cr.Session(impersonate="chrome131", headers={"User-Agent": _UA})
     ref = {"Referer": "https://www.bilibili.com/"}
-    sess.get("https://www.bilibili.com/", timeout=12)  # 预热 cookie
+    try:
+        sess.get("https://www.bilibili.com/", timeout=12)  # 预热 cookie
+    except Exception as e:
+        raise ValueError("预热: %s" % e)
 
     target = page_url
     if "b23.tv" in urlparse(page_url).netloc:
@@ -193,8 +211,8 @@ def _resolve_bilibili(page_url, page=1):
     if not key:
         raise ValueError("不是 B站视频链接")
 
-    view = sess.get("https://api.bilibili.com/x/web-interface/view",
-                    params=key, headers=ref, timeout=15).json()
+    view = _bili_json(sess, "https://api.bilibili.com/x/web-interface/view",
+                      "view", params=key, headers=ref, timeout=15)
     if view.get("code") != 0:
         raise ValueError("view: %s" % (view.get("message") or view.get("code")))
     data = view.get("data") or {}
@@ -212,8 +230,8 @@ def _resolve_bilibili(page_url, page=1):
     if key.get("aid"):
         params["avid"] = key["aid"]
     params.update({"cid": cid, "qn": 80, "fnval": 16, "fnver": 0, "fourk": 1})
-    play = sess.get("https://api.bilibili.com/x/player/playurl",
-                    params=params, headers=ref, timeout=15).json()
+    play = _bili_json(sess, "https://api.bilibili.com/x/player/playurl",
+                      "playurl", params=params, headers=ref, timeout=15)
     if play.get("code") != 0:
         raise ValueError("playurl: %s" % (play.get("message") or play.get("code")))
     dash = ((play.get("data") or {}).get("dash")) or {}
