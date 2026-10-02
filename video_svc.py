@@ -453,7 +453,12 @@ def resolve_video(url, mode="auto"):
             fmt = _pick_format(info)
             if not fmt:
                 raise ValueError("该视频无可用直链格式")
-            return _result_from_ytdlp(url, info, fmt)
+            result = _result_from_ytdlp(url, info, fmt)
+            if errors:
+                # 上游特判失败但已用别的手段解析成功：把失败原因带回去，
+                # 否则线上排查时完全看不到「为什么没走特判」。
+                result["warnings"] = list(errors)
+            return result
         except Exception as e:
             errors.append(f"yt-dlp: {e}")
         if mode == "ytdlp":
@@ -464,7 +469,10 @@ def resolve_video(url, mode="auto"):
         try:
             cands, title = _sniff_candidates(url)
             if cands:
-                return _result_from_candidates(url, cands, title=title, stage="sniff")
+                result = _result_from_candidates(url, cands, title=title, stage="sniff")
+                if errors:
+                    result["warnings"] = list(errors)
+                return result
             errors.append("服务端嗅探: 未找到媒体地址")
         except Exception as e:
             errors.append(f"服务端嗅探: {e}")
