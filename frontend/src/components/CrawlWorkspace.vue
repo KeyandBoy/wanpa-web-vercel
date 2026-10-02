@@ -694,7 +694,12 @@ async function vSearch() {
     ElMessage.warning('请至少选择一个数据源')
     return
   }
-  if (!isPlus.value && vform.sources.some((s) => isSourcePlus(s))) {
+  const searchable = vform.sources.filter((s) => s !== 'link')
+  if (!searchable.length) {
+    ElMessage.warning('「链接解析」不能用关键词搜索，请切换到「链接解析」标签页粘贴链接')
+    return
+  }
+  if (!isPlus.value && searchable.some((s) => isSourcePlus(s))) {
     ElMessage.warning('所选视频源为 Plus 专属，请先开通 Plus')
     return
   }
@@ -704,7 +709,7 @@ async function vSearch() {
   try {
     const kw = vform.keyword.trim()
     const results = await Promise.all(
-      vform.sources.map(async (src) => {
+      searchable.map(async (src) => {
         try {
           const r = await api.videoSearch({ keyword: kw, source: src, count: vform.count })
           return r.items || []
@@ -734,7 +739,7 @@ async function vSearch() {
       return
     }
     pushVideoLog(
-      `视频搜索(${vform.sources.join('+')}): ${all.length} 条候选` +
+      `视频搜索(${searchable.join('+')}): ${all.length} 条候选` +
         (vFilteredOut.value ? `(按时长过滤 ${vFilteredOut.value} 条)` : '')
     )
   } catch (e) {

@@ -2,7 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/**/*.py": {
-      "memory": 1024,
       "maxDuration": 60,
       "excludeFiles": "{output/**,frontend/**,node_modules/**,static/**,public/**,test*/**,*.md,.git/**,.idea/**}"
     }

@@ -29,9 +29,18 @@ import time
 import uuid
 from urllib.parse import quote, unquote, urljoin, urlparse
 
-import yt_dlp
+try:
+    import yt_dlp
+except Exception:
+    yt_dlp = None
 
 from trans_svc import to_en, to_zh, translate_many
+
+
+def _require_yt_dlp():
+    if yt_dlp is None:
+        raise RuntimeError("本部署未安装 yt-dlp，该源不可用")
+    return yt_dlp
 
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -130,6 +139,7 @@ def _extra_headers(url):
 
 def _resolve_ytdlp(url):
     """用 yt-dlp 解析播放页（纯 HTTP，不做浏览器 Cookie 读取）。"""
+    yt_dlp = _require_yt_dlp()
     opts = dict(_base_opts(url))
     opts["skip_download"] = True
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -389,6 +399,7 @@ def search_youtube(keyword, count):
     opts = dict(_base_opts())
     opts.update({"extract_flat": "in_playlist", "playlist_items": f"1-{count}"})
     try:
+        yt_dlp = _require_yt_dlp()
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"ytsearch{count}:{keyword}", download=False)
     except Exception as e:
@@ -559,6 +570,7 @@ def search_pornhub(keyword, count):
     opts.update({"extract_flat": "in_playlist", "playlist_items": f"1-{count}"})
     url = "https://www.pornhub.com/video/search?search=" + quote(to_en(keyword))
     try:
+        yt_dlp = _require_yt_dlp()
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
@@ -977,6 +989,7 @@ def _resolve_xhamster(url):
     opts = dict(_base_opts(url))
     opts["skip_download"] = True
     try:
+        yt_dlp = _require_yt_dlp()
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
