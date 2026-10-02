@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 import uuid
-from urllib.parse import quote, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
 
 try:
     import yt_dlp
@@ -144,6 +144,106 @@ def _resolve_ytdlp(url):
     opts["skip_download"] = True
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
+
+
+def _is_bilibili_page(url):
+    try:
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        return False
+    return any(host == h or host.endswith("." + h)
+               for h in ("bilibili.com", "bilibili.tv", "b23.tv"))
+
+
+def _bili_key(target):
+    m = re.search(r"/video/(BV[0-9A-Za-z]{10})", target)
+    if m:
+        return {"bvid": m.group(1)}
+    m = re.search(r"/video/av(\d+)", target)
+    if m:
+        return {"aid": m.group(1)}
+    return None
+
+
+def _url_page(url):
+    """取 /video/xxx?p=2 的分 P 序号（1 起）"""
+    try:
+        return max(1, int((parse_qs(urlparse(url).query).get("p") or ["1"])[0] or 1))
+    except Exception:
+        return 1
+
+
+def _resolve_bilibili(page_url, page=1):
+    """B站走 api.bilibili.com 的 view + playurl(DASH)。
+
+    yt-dlp 抓 /video/ 页面会被 B 站 412 反爬拦截（Vercel 机房 IP 更易触发），
+    但 api.bilibili.com 不拦；且与 search_bilibili 共用 curl_cffi 的 TLS 指纹
+    伪装通道。返回结构复用 _result_from_ytdlp，前端按「视频+音频双流」同步播放。
+    """
+    from curl_cffi import requests as cr
+
+    sess = cr.Session(impersonate="chrome131", headers={"User-Agent": _UA})
+    ref = {"Referer": "https://www.bilibili.com/"}
+    sess.get("https://www.bilibili.com/", timeout=12)  # 预热 cookie
+
+    target = page_url
+    if "b23.tv" in urlparse(page_url).netloc:
+        target = str(sess.get(page_url, allow_redirects=True, timeout=12).url)
+    key = _bili_key(target)
+    if not key:
+        raise ValueError("不是 B站视频链接")
+
+    view = sess.get("https://api.bilibili.com/x/web-interface/view",
+                    params=key, headers=ref, timeout=15).json()
+    if view.get("code") != 0:
+        raise ValueError("view: %s" % (view.get("message") or view.get("code")))
+    data = view.get("data") or {}
+    cid = data.get("cid")
+    pages = data.get("pages") or []
+    if pages:
+        idx = max(1, min(int(page or 1), len(pages)))
+        cid = pages[idx - 1].get("cid") or cid
+    if not cid:
+        raise ValueError("view: 缺少 cid")
+
+    params = {}
+    if key.get("bvid"):
+        params["bvid"] = key["bvid"]
+    if key.get("aid"):
+        params["avid"] = key["aid"]
+    params.update({"cid": cid, "qn": 80, "fnval": 16, "fnver": 0, "fourk": 1})
+    play = sess.get("https://api.bilibili.com/x/player/playurl",
+                    params=params, headers=ref, timeout=15).json()
+    if play.get("code") != 0:
+        raise ValueError("playurl: %s" % (play.get("message") or play.get("code")))
+    dash = ((play.get("data") or {}).get("dash")) or {}
+    vlist = [v for v in (dash.get("video") or []) if v.get("baseUrl") or v.get("base_url")]
+    if not vlist:
+        raise ValueError("playurl: 无可用视频流")
+    ok = [v for v in vlist if (v.get("height") or 0) <= MAX_HEIGHT] or vlist
+    best = max(ok, key=lambda v: ((v.get("height") or 0), (v.get("bandwidth") or 0)))
+    height = best.get("height") or 0
+
+    # 拼成 yt-dlp 形状，复用 _result_from_ytdlp 的双流/翻译/候选逻辑
+    vfmt = {"url": best.get("baseUrl") or best.get("base_url"), "format_id": "bili",
+            "ext": "mp4", "height": height, "protocol": "https",
+            "vcodec": "avc1", "acodec": "none"}
+    afmt = None
+    alist = [a for a in (dash.get("audio") or []) if a.get("baseUrl") or a.get("base_url")]
+    if alist:
+        ba = max(alist, key=lambda a: a.get("bandwidth") or 0)
+        afmt = {"url": ba.get("baseUrl") or ba.get("base_url"), "format_id": "bili-a",
+                "ext": "m4a", "height": 0, "protocol": "https",
+                "vcodec": "none", "acodec": "mp4a"}
+    info = {
+        "title": data.get("title") or "",
+        "duration": data.get("duration"),
+        "formats": [vfmt],
+        "requested_formats": [vfmt] + ([afmt] if afmt else []),
+    }
+    result = _result_from_ytdlp(page_url, info, vfmt)
+    result["stage"] = "site"
+    return result
 
 
 def _guess_title(page_url):
@@ -337,6 +437,14 @@ def resolve_video(url, mode="auto"):
             errors.append(f"xhamster: {e}")
         if mode == "ytdlp":
             raise ValueError("; ".join(errors))
+
+    # S1b: B站特判（yt-dlp 抓页面会被 412 拦，改走 api.bilibili.com）
+    if mode in ("auto", "ytdlp") and _is_bilibili_page(url):
+        try:
+            return _resolve_bilibili(url, page=_url_page(url))
+        except Exception as e:
+            errors.append(f"bilibili 特判: {e}")
+            # 特判失败不中断，让下面的 yt-dlp 再试一次
 
     # S2: yt-dlp
     if mode in ("auto", "ytdlp"):
