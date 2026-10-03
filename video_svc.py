@@ -671,27 +671,42 @@ _DEAD_MARKS = (
     "has been removed by", "no longer available",
 )
 
+# 内容能看但要账号：优酷 -3007 之类。YouTube 的「Sign in to confirm you're not a bot」
+# 刻意不在此列 —— 那是验证问题不是内容限制，得留着提示用户配 cookie。
+_LOGIN_MSG = "该内容需要登录或会员才能观看（源站限制）"
+_LOGIN_MARKS = (
+    "-3007", "请先登录", "需要登录", "请登录后", "观看此节目",
+    "会员专享", "需要会员", "login required",
+)
+
 
 def _friendly_error(msg):
-    """把源站内容失效翻译成人话，并剥掉 yt-dlp 让人去 GitHub 报 issue 的尾巴。"""
+    """把源站内容失效/登录限制翻译成人话，并剥掉 yt-dlp 让人去 GitHub 报 issue 的尾巴。"""
     low = (msg or "").lower()
     if any(mk in low for mk in _DEAD_MARKS):
         return _DEAD_MSG
+    if any(mk in low for mk in _LOGIN_MARKS):
+        return _LOGIN_MSG
     msg = re.sub(r";?\s*please report this issue.*$", "", msg or "", flags=re.S | re.I)
     msg = re.sub(r"\s*(?:also\s+)?see\s+https://github\.com/yt-dlp.*$", "", msg, flags=re.S | re.I)
     return msg.strip(" ;")
 
 
 def _assemble_error(errors, empty="解析失败"):
-    """逐条友好化后拼接；一旦判定是内容失效，就只说这一句（别的都是噪音）。"""
-    out, seen = [], set()
+    """逐条友好化后拼接；判定出内容结论（下架/需登录）就说那一句，别让噪音盖过它。"""
+    out, seen, login = [], set(), False
     for e in errors:
         f = _friendly_error(e)
         if f == _DEAD_MSG:
             return _DEAD_MSG
+        if f == _LOGIN_MSG:
+            login = True
+            continue
         if f and f not in seen:
             seen.add(f)
             out.append(f)
+    if login:
+        return _LOGIN_MSG
     return "; ".join(out) or empty
 
 
@@ -1347,16 +1362,103 @@ def search_acfun(keyword, count):
     return items
 
 
+def _clock_to_sec(text):
+    if not text or not re.fullmatch(r"\d{1,3}:\d{2}(?::\d{2})?", str(text)):
+        return None
+    parts = [int(p) for p in str(text).split(":")]
+    sec = 0
+    for p in parts:
+        sec = sec * 60 + p
+    return sec
+
+
+def _youku_row_item(cid, row):
+    title = ((row.get("titleDTO") or {}).get("displayName") or "").strip()
+    if not title:
+        return None
+    url = None
+    thumb = None
+    dur = None
+    if cid == "H5UGC":
+        vid = row.get("videoId")
+        if vid:
+            url = "https://v.youku.com/v_show/id_%s.html" % vid
+        shot = row.get("screenShotDTO") or {}
+        thumb = shot.get("thumbUrl")
+        dur = _clock_to_sec(shot.get("rightBottomText"))
+    elif cid == "H5ShowCard":
+        url = ((row.get("leftButtonDTO") or {}).get("action") or {}).get("value")
+        thumb = (row.get("posterDTO") or {}).get("vThumbUrl")
+    if not url or not url.startswith("http"):
+        return None
+    return {
+        "title": title[:200],
+        "url": url,
+        "duration": dur,
+        "duration_text": "",
+        "thumb": thumb,
+        "source": "youku",
+    }
+
+
+def _youku_api_items(sess, keyword, count):
+    """优酷开放搜索接口（JSON），返回 (items, 接口可达)。
+
+    旧路线 so.youku.com/search_video 会撞阿里 X5 数风控：响应 200，正文却只是
+    跳 `_____tmd_____/punish` 的脚本，HTTP 层看不出异常、内容层全空，程序化无解。
+    这个接口不设防，直连就能拿到结构化结果。
+    """
+    try:
+        r = sess.get(
+            "https://search.youku.com/api/search",
+            params={"pg": 1, "pz": max(count * 3, 25), "q": keyword},
+            timeout=15,
+        )
+        data = r.json()
+    except Exception:
+        return None, False
+    if (data.get("message") or "") != "success":
+        return None, False
+    rows = []
+    for comp in data.get("pageComponentList") or []:
+        for node in (comp.get("componentMap") or {}).values():
+            cid = node.get("componentId")
+            for row in node.get("data") or []:
+                item = _youku_row_item(cid, row)
+                if item:
+                    rows.append(item)
+    # 优酷自家内容排前（无需登录即可播的居多），站外聚合结果兜底补数
+    own = [i for i in rows if "v.youku.com" in i["url"]]
+    rest = [i for i in rows if "v.youku.com" not in i["url"]]
+    items, seen = [], set()
+    for it in own + rest:
+        if it["url"] in seen:
+            continue
+        seen.add(it["url"])
+        items.append(it)
+        if len(items) >= count:
+            break
+    return items, True
+
+
 def search_youku(keyword, count):
     from curl_cffi import requests as cr
 
+    sess = cr.Session(
+        impersonate="chrome131",
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        },
+    )
+    items, api_ok = _youku_api_items(sess, keyword, count)
+    if api_ok:
+        if not items:
+            raise ValueError("优酷没有搜索到结果")
+        _translate_items(items)
+        return items
+
+    # 接口不可用时回退老的搜索页；它通常会被数风控拦下，错误信息如实告知
     try:
-        sess = cr.Session(
-            impersonate="chrome131",
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-            },
-        )
         sess.get("https://www.youku.com/", timeout=12)
         r = sess.get("https://so.youku.com/search_video/q_" + quote(keyword), timeout=12)
         text = r.text
