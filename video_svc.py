@@ -232,39 +232,16 @@ def _bili_av_url(url):
 
 _BILI_DEAD_TEXT = re.compile(r"稿件不可见|内容已失效|视频去哪了|该视频已失效|视频已失效")
 
-# 稿件状态类业务码。其余正数码是请求/频率/登录问题，负数是风控系统码（-412 等），
-# 都不代表内容下架 —— 误报比漏报伤得多。
-_BILI_DEAD_CODES = frozenset((62002, 62004, 62012, 62016, 62021))
 
-
-def _bili_no_playinfo_reason(sess, target, html):
+def _bili_no_playinfo_reason(html):
     """页面没有 __playinfo__ 时，判断是内容失效还是风控/结构变更。
 
-    两类都返回 200，光看页面分不出来，所以再问一次 view?aid= —— 实测这个端点
-    带 aid 是 200（带 bvid 才是 412），能直接拿到稿件状态码。
+    只认页面自己的文案。早先这里还会再问一次 view?aid=，但那个端点对机房 IP
+    会给同一套死码（正常视频 av80433022 也回 62012），拿它判下架会把能看的视频
+    说成已下架，误报比漏报伤得多 —— 已去掉。
     """
     if _BILI_DEAD_TEXT.search(html or ""):
         return _DEAD_MSG
-    am = re.search(r"av(\d+)", target)
-    avid = int(am.group(1)) if am else None
-    if avid is None:
-        bv = re.search(r"video/(BV[0-9A-Za-z]{10})", target)
-        if bv:
-            try:
-                avid = _bvid_to_avid(bv.group(1))
-            except Exception:
-                avid = None
-    if avid:
-        try:
-            rr = sess.get("https://api.bilibili.com/x/web-interface/view?aid=%d" % avid, timeout=12)
-            jj = rr.json()
-            code = jj.get("code")
-            # 只认稿件状态业务码。负数是风控/系统码（-412 请求被拦截、-352 需要校验），
-            # 机房 IP 很容易撞上，那跟下架是两回事，不能误报。
-            if isinstance(code, int) and code in _BILI_DEAD_CODES:
-                return _DEAD_MSG + "（源站 code=%s）" % code
-        except Exception:
-            pass
     return "页面未内嵌 __playinfo__（可能被风控或页面结构变更）"
 
 
@@ -296,7 +273,7 @@ def _resolve_bilibili(page_url):
     html = r.text or ""
     m = re.search(r"window\.__playinfo__\s*=\s*(\{.*?\})\s*</script>", html, re.S)
     if not m:
-        raise ValueError(_bili_no_playinfo_reason(sess, target, html))
+        raise ValueError(_bili_no_playinfo_reason(html))
     try:
         meta = json.loads(m.group(1))
     except Exception as e:
