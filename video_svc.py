@@ -230,6 +230,38 @@ def _bili_av_url(url):
     return url[:m.start(1)] + key + tail
 
 
+_BILI_DEAD_TEXT = re.compile(r"稿件不可见|内容已失效|视频去哪了|已失效|无法查看|禁止访问")
+
+
+def _bili_no_playinfo_reason(sess, target, html):
+    """页面没有 __playinfo__ 时，判断是内容失效还是风控/结构变更。
+
+    两类都返回 200，光看页面分不出来，所以再问一次 view?aid= —— 实测这个端点
+    带 aid 是 200（带 bvid 才是 412），能直接拿到稿件状态码。
+    """
+    if _BILI_DEAD_TEXT.search(html or ""):
+        return _DEAD_MSG
+    am = re.search(r"av(\d+)", target)
+    avid = int(am.group(1)) if am else None
+    if avid is None:
+        bv = re.search(r"video/(BV[0-9A-Za-z]{10})", target)
+        if bv:
+            try:
+                avid = _bvid_to_avid(bv.group(1))
+            except Exception:
+                avid = None
+    if avid:
+        try:
+            rr = sess.get("https://api.bilibili.com/x/web-interface/view?aid=%d" % avid, timeout=12)
+            jj = rr.json()
+            code = jj.get("code")
+            if code and code != 0:
+                return _DEAD_MSG + "（源站 code=%s）" % code
+        except Exception:
+            pass
+    return "页面未内嵌 __playinfo__（可能被风控或页面结构变更）"
+
+
 def _resolve_bilibili(page_url):
     """B站解析：curl_cffi 抓视频页，读内嵌的 window.__playinfo__ 拿 DASH 双流。
 
@@ -258,7 +290,7 @@ def _resolve_bilibili(page_url):
     html = r.text or ""
     m = re.search(r"window\.__playinfo__\s*=\s*(\{.*?\})\s*</script>", html, re.S)
     if not m:
-        raise ValueError("页面未内嵌 __playinfo__（可能被风控或页面结构变更）")
+        raise ValueError(_bili_no_playinfo_reason(sess, target, html))
     try:
         meta = json.loads(m.group(1))
     except Exception as e:
@@ -659,6 +691,42 @@ def _sniff_candidates(url):
     return trusted, title
 
 
+_DEAD_MSG = "视频已下架或不可见（源站已移除该内容）"
+
+# 源站内容失效的信号：B站稿件状态码、腾讯下架文案、各站通用下架/私有/删除提示。
+# 只认「内容没了」这类，风控和网络错误不在此列（那要留着排查）。
+_DEAD_MARKS = (
+    "62012", "62002", "62004", "62016", "62021",
+    "外星人劫走",
+    "稿件不可见", "内容已失效", "视频去哪了", "已下架", "已被删除", "已失效",
+    "video unavailable", "private video", "video has been removed",
+    "has been removed by", "no longer available",
+)
+
+
+def _friendly_error(msg):
+    """把源站内容失效翻译成人话，并剥掉 yt-dlp 让人去 GitHub 报 issue 的尾巴。"""
+    low = (msg or "").lower()
+    if any(mk in low for mk in _DEAD_MARKS):
+        return _DEAD_MSG
+    msg = re.sub(r";?\s*please report this issue.*$", "", msg or "", flags=re.S | re.I)
+    msg = re.sub(r"\s*(?:also\s+)?see\s+https://github\.com/yt-dlp.*$", "", msg, flags=re.S | re.I)
+    return msg.strip(" ;")
+
+
+def _assemble_error(errors, empty="解析失败"):
+    """逐条友好化后拼接；一旦判定是内容失效，就只说这一句（别的都是噪音）。"""
+    out, seen = [], set()
+    for e in errors:
+        f = _friendly_error(e)
+        if f == _DEAD_MSG:
+            return _DEAD_MSG
+        if f and f not in seen:
+            seen.add(f)
+            out.append(f)
+    return "; ".join(out) or empty
+
+
 def resolve_video(url, mode="auto"):
     """多级解析：直链 → 站点特判 → yt-dlp → 服务端嗅探 → 浏览器抓包
 
@@ -693,7 +761,7 @@ def resolve_video(url, mode="auto"):
         except Exception as e:
             errors.append(f"xhamster: {e}")
         if mode == "ytdlp":
-            raise ValueError("; ".join(errors))
+            raise ValueError(_assemble_error(errors))
 
     # S1b: B站特判（yt-dlp 抓页面会被 412 拦，改走 api.bilibili.com）
     if mode in ("auto", "ytdlp") and _is_bilibili_page(url):
@@ -726,7 +794,7 @@ def resolve_video(url, mode="auto"):
         except Exception as e:
             errors.append(f"yt-dlp: {e}")
         if mode == "ytdlp":
-            raise ValueError("; ".join(errors) or "解析失败")
+            raise ValueError(_assemble_error(errors))
 
     # S3: 服务端嗅探
     if mode in ("auto", "server"):
@@ -741,11 +809,11 @@ def resolve_video(url, mode="auto"):
         except Exception as e:
             errors.append(f"服务端嗅探: {e}")
         if mode == "server":
-            raise ValueError("; ".join(errors) or "服务端嗅探未找到媒体地址")
+            raise ValueError(_assemble_error(errors, "服务端嗅探未找到媒体地址"))
 
 
 
-    raise ValueError("; ".join(errors) or "解析失败")
+    raise ValueError(_assemble_error(errors))
 
 
 _YT_COOKIE_LOCK = threading.Lock()
