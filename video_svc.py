@@ -24,6 +24,7 @@ import socket
 
 
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -513,6 +514,22 @@ def _result_from_ytdlp(page_url, info, fmt):
     return result
 
 
+# 嗅探可能把整页登录页当媒体地址：YouTube 撞验证时抓回来的就是 Google 登录页，
+# 拉流回 text/html，前端点播放只是一片空白 —— 这种宁可不给地址。
+_NON_MEDIA_MARKS = (
+    "accounts.google.com",
+    "/servicelogin",
+    "consent.youtube.com",
+    "accounts.youtube.com",
+    "challenge/redirect",
+)
+
+
+def _is_non_media_url(u):
+    low = (u or "").lower()
+    return any(m in low for m in _NON_MEDIA_MARKS)
+
+
 def _sniff_candidates(url):
     """服务端嗅探（页面 + 1 层 iframe）"""
     import extract_svc
@@ -527,7 +544,7 @@ def _sniff_candidates(url):
                     cands.extend(extract_svc.sniff_sources(iframe, h2))
             except Exception:
                 continue
-    ordered = extract_svc.score_and_dedup(cands)
+    ordered = [c for c in extract_svc.score_and_dedup(cands) if not _is_non_media_url(c.get("url") or "")]
     title = extract_svc.guess_title(url, html) if html else None
     return ordered, title
 
@@ -621,6 +638,49 @@ def resolve_video(url, mode="auto"):
     raise ValueError("; ".join(errors) or "解析失败")
 
 
+_YT_COOKIE_LOCK = threading.Lock()
+_YT_COOKIE_PATH = None
+
+
+def _is_youtube_url(url):
+    if not url:
+        return False
+    low = url.lower()
+    return "youtube.com" in low or "youtu.be" in low
+
+
+def _youtube_cookiefile():
+    """把 YOUTUBE_COOKIES（Netscape 格式 cookie.txt 全文）落成临时文件供 yt-dlp 读取。
+
+    YouTube 对机房 IP 一律要求验证：换 player_client 全试过（6 个 client × 6 视频 = 36 次全 BOT），
+    yt-dlp 内置的 PO Token provider 只有缓存、没有生成器（生成要外部 Node 插件），公共 Invidious
+    实例又全部 401/403/502 —— 浏览器 cookie 是唯一可靠路子。
+    内容只落盘、绝不打印。
+    """
+    global _YT_COOKIE_PATH
+    try:
+        from env_utils import env
+
+        raw = env("YOUTUBE_COOKIES")
+    except Exception:
+        return None
+    if not raw:
+        return None
+    with _YT_COOKIE_LOCK:
+        if _YT_COOKIE_PATH:
+            return _YT_COOKIE_PATH if os.path.exists(_YT_COOKIE_PATH) else None
+        try:
+            d = tempfile.mkdtemp(prefix="ytck_")
+            path = os.path.join(d, "cookies.txt")
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(raw.rstrip("\n") + "\n")
+            _YT_COOKIE_PATH = path
+            return path
+        except Exception:
+            return None
+
+
 def _base_opts(url=None):
     opts = {
         "quiet": True,
@@ -638,6 +698,10 @@ def _base_opts(url=None):
     ref = _referer_for(url) if url else None
     if ref:
         opts["http_headers"]["Referer"] = ref
+
+    ck = _youtube_cookiefile()
+    if ck and _is_youtube_url(url):
+        opts["cookiefile"] = ck
 
 
     p = _proxy()
