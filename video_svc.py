@@ -165,6 +165,44 @@ def _bili_key(target):
     return None
 
 
+_BILI_ALPHABET = "FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf"
+_BILI_XOR_CODE = 23442827791579
+_BILI_MASK_CODE = 2251799813685247
+
+
+def _bvid_to_avid(bvid):
+    """BV 号转 AV 号（现行算法：第 51 位旗位 + 58 进制 + 两处字符换位）。"""
+    if len(bvid) != 12 or not bvid.startswith("BV"):
+        raise ValueError("非法 BV 号: %s" % bvid)
+    s = list(bvid)
+    s[3], s[9] = s[9], s[3]
+    s[4], s[7] = s[7], s[4]
+    tmp = 0
+    for c in s[3:]:
+        idx = _BILI_ALPHABET.find(c)
+        if idx < 0:
+            raise ValueError("非法 BV 号: %s" % bvid)
+        tmp = tmp * 58 + idx
+    return (tmp & _BILI_MASK_CODE) ^ _BILI_XOR_CODE
+
+
+def _bili_av_url(url):
+    """把 /video/BVxxxx 改写成 /video/av<aid>（?p=N 等参数原样保留）。
+
+    实测同一台 Vercel 机房 IP：抓 /video/av 稳定 200、抓 /video/BV 稳定 412，
+    老视频新视频一视同仁，交叉验证 6/6 vs 0/6；两者指向同一视频，改写后
+    B站特判与 yt-dlp 兜底都能过。
+    """
+    m = re.search(r"/video/(BV[0-9A-Za-z]{10})", url)
+    if not m:
+        return url
+    try:
+        aid = _bvid_to_avid(m.group(1))
+    except Exception:
+        return url
+    return url[:m.start(1)] + "av%d" % aid + url[m.end(1):]
+
+
 def _resolve_bilibili(page_url):
     """B站解析：curl_cffi 抓视频页，读内嵌的 window.__playinfo__ 拿 DASH 双流。
 
@@ -179,6 +217,7 @@ def _resolve_bilibili(page_url):
     target = page_url
     if "b23.tv" in urlparse(page_url).netloc:
         target = str(sess.get(page_url, allow_redirects=True, timeout=12).url)
+    target = _bili_av_url(target)
     if not _bili_key(target):
         raise ValueError("不是 B站视频链接")
 
@@ -405,6 +444,10 @@ def resolve_video(url, mode="auto"):
     """
     mode = (mode or "auto").strip().lower() or "auto"
     errors = []
+
+    # B站 BV 路径对机房 IP 稳定 412，改写成同视频的 av 路径后再走全链
+    if _is_bilibili_page(url):
+        url = _bili_av_url(url)
 
     # S0: 本身就是媒体直链
     try:
