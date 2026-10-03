@@ -160,6 +160,9 @@ function destroyHls() {
   }
 }
 
+// 用户意图：视频该不该有声。暂停/切换都要清掉，否则迟到的 play() 会把声音又带出来
+let audioWantPlay = false
+
 function resetPlayer() {
   destroyHls()
   playerSrc.value = ''
@@ -168,6 +171,7 @@ function resetPlayer() {
   playerAudioSig.value = ''
   playerReady.value = false
   playerHint.value = ''
+  audioWantPlay = false
 }
 
 // 双流同步：视频元素是主控（用户操作它），音频元素静默跟随
@@ -183,13 +187,28 @@ function safeSetTime(el, t) {
     audioSyncing = false
   }
 }
-function onVideoPlay() {
+function playAudio() {
+  if (!audioWantPlay) return
   const a = audioRef.value
   if (a && playerAudioSrc.value && a.paused) {
-    a.play().catch(() => pushVideoLog('音频未自动出声，点击视频画面即可出声'))
+    // play() 是异步的：等它真的起来后若期间已被暂停，必须补一次 pause，
+    // 否则暂停操作会被这次迟到的 play 覆盖掉。
+    a.play()
+      .then(() => {
+        if (!audioWantPlay) a.pause()
+      })
+      .catch(() => pushVideoLog('音频未自动出声，点击视频画面即可出声'))
   }
 }
+function onVideoPlay() {
+  audioWantPlay = true
+}
+function onVideoPlaying() {
+  // 视频真正渲染出画面了才放音频，避免画面还没出来声音先响
+  playAudio()
+}
 function onVideoPause() {
+  audioWantPlay = false
   const a = audioRef.value
   if (a) a.pause()
 }
@@ -205,9 +224,12 @@ function onVideoTime() {
   if (Math.abs(a.currentTime - v.currentTime) > 0.4) safeSetTime(a, v.currentTime)
 }
 function onPlayerClick() {
-  // 用户手势里补一次，绕过浏览器的有声自动播放策略
-  const a = audioRef.value
-  if (a && playerAudioSrc.value && a.paused) a.play().catch(() => {})
+  // 用户手势里补一次，绕过浏览器的有声自动播放策略。
+  // 必须先看视频当前是不是在播：点暂停按钮的 click 也会冒泡到这里，
+  // 不判断的话刚被暂停的音频会被重新播起来。
+  const v = videoRef.value
+  if (v && v.paused) return
+  playAudio()
 }
 function onAudioError() {
   pushVideoLog('音频流加载失败，当前可能无声')
@@ -821,8 +843,6 @@ async function vPreview(item) {
     playerReady.value = true
     playerTitle.value = `${item.title} · ${info.format || ''}`
     pushVideoLog(`预览就绪: ${info.title || item.title} (${info.format || ''})`)
-    await nextTick()
-    onVideoPlay()
   } catch (e) {
     if (mySession !== playerSession.value) return
     playerTitle.value = `${item.title} · 解析失败`
@@ -982,8 +1002,6 @@ async function vPlayCandidate(res, cand) {
     playerReady.value = true
     playerTitle.value = `${fake.title} · ${cand.label || cand.ext || ''}`
     pushVideoLog(`链接播放: ${fake.title} (${cand.label || cand.ext || ''})`)
-    await nextTick()
-    onVideoPlay()
   } catch (e) {
     if (mySession !== playerSession.value) return
     pushVideoLog(`链接播放失败: ${e.message}`)
@@ -2172,6 +2190,7 @@ onBeforeUnmount(() => {
               @click="onPlayerClick"
               @pointerdown="onPlayerClick"
               @play="onVideoPlay"
+              @playing="onVideoPlaying"
               @pause="onVideoPause"
               @seeked="onVideoSeek"
               @timeupdate="onVideoTime"
