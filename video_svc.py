@@ -281,6 +281,80 @@ def _resolve_bilibili(page_url):
     return result
 
 
+def _is_sohu_page(url):
+    try:
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        return False
+    return any(host == h or host.endswith("." + h) for h in ("sohu.com",))
+
+
+def _resolve_sohu(page_url):
+    """搜狐解析：抓原页面取 `var vid`，再调 videonew.do 拿 mp4PlayUrl 直链。
+
+    yt-dlp 走的是另一条路（把 /v/ 的 base64 解成 my.tv.sohu.com 的 .shtml 再抓），
+    实测那条路 404；同一地址用 curl_cffi 伪装浏览器却是 200，说明是 TLS/UA 被拒。
+    videonew.do 直接回 mp4 直链，不需要 yt-dlp 那套 allot 调度，故整条特判自成一体。
+    """
+    from curl_cffi import requests as cr
+
+    sess = cr.Session(impersonate="chrome131", headers={"User-Agent": _UA})
+    r = sess.get(page_url, timeout=20, headers={
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Referer": "https://www.bing.com/",
+    })
+    if r.status_code != 200:
+        raise ValueError("页面 HTTP %s" % r.status_code)
+    html_page = r.text or ""
+    m = re.search(r"var vid\s*=\s*['\"](\d+)['\"]", html_page)
+    if not m:
+        raise ValueError("页面未找到 vid")
+    vid = m.group(1)
+
+    r2 = sess.get("http://my.tv.sohu.com/play/videonew.do?vid=" + vid, timeout=20,
+                  headers={"Referer": page_url})
+    if r2.status_code != 200:
+        raise ValueError("播放信息 HTTP %s" % r2.status_code)
+    try:
+        meta = r2.json()
+    except Exception as e:
+        raise ValueError("播放信息非 JSON: %s" % e)
+    data = meta.get("data") or {}
+    urls = [u for u in (data.get("mp4PlayUrl") or data.get("clipsURL") or [])
+            if isinstance(u, str) and u.startswith("http")]
+    if not urls:
+        raise ValueError("未拿到播放地址 play=%s status=%s"
+                         % (meta.get("play"), meta.get("status")))
+
+    title = ""
+    tm = re.search(r'<meta property="og:title" content="([^"]*)"', html_page)
+    if tm:
+        import html as _html
+        title = _html.unescape(tm.group(1)).strip()
+    try:
+        height = int(data.get("height") or 0)
+    except Exception:
+        height = 0
+    try:
+        size = int(data.get("totalBytes") or 0)
+    except Exception:
+        size = 0
+
+    fmt = {"url": urls[0], "format_id": "sohu", "ext": "mp4", "height": height,
+           "protocol": "https", "vcodec": "avc1", "acodec": "mp4a",
+           "filesize": size or None}
+    info = {
+        "title": title or "sohu %s" % vid,
+        "duration": data.get("totalDuration") or data.get("totalDurationDouble"),
+        "formats": [fmt],
+        "requested_formats": [fmt],
+    }
+    result = _result_from_ytdlp(page_url, info, fmt)
+    result["stage"] = "site"
+    return result
+
+
 def _guess_title(page_url):
     try:
         path = urlparse(page_url).path.rstrip("/")
@@ -484,6 +558,13 @@ def resolve_video(url, mode="auto"):
         except Exception as e:
             errors.append(f"bilibili 特判: {e}")
             # 特判失败不中断，让下面的 yt-dlp 再试一次
+
+    # S1c: 搜狐特判（yt-dlp 改写后的 my.tv 地址 404）
+    if mode in ("auto", "ytdlp") and _is_sohu_page(url):
+        try:
+            return _resolve_sohu(url)
+        except Exception as e:
+            errors.append(f"sohu 特判: {e}")
 
     # S2: yt-dlp
     if mode in ("auto", "ytdlp"):
