@@ -917,13 +917,17 @@ def search_yahoo(keyword, count):
         raise ValueError(f"Yahoo 视频访问失败: {e}") from e
     items = []
     seen = set()
+    total = 0
+    blocked = 0
     for m in re.finditer(
         r'<li class="tile[^"]*"[^>]*id="resitem-\d+"[^>]*>.*?data-referenceurl="([^"]*)"[^>]*>(.*?)</a></li>',
         text,
         re.S,
     ):
         ref, inner = m.group(1), m.group(2)
+        total += 1
         if _is_unsupported_video_url(ref):
+            blocked += 1
             continue
         url = ref
         q = parse_qs(urlparse(url).query)
@@ -964,7 +968,7 @@ def search_yahoo(keyword, count):
         if len(items) >= count:
             break
     if not items:
-        raise ValueError("Yahoo 视频没有解析到结果")
+        raise ValueError(f"Yahoo 视频没有解析到结果（页内匹配{total}条，被过滤{blocked}条，html={len(text)}字节）")
     _translate_items(items)
     return items
 
