@@ -187,20 +187,25 @@ def _bvid_to_avid(bvid):
 
 
 def _bili_av_url(url):
-    """把 /video/BVxxxx 改写成 /video/av<aid>（?p=N 等参数原样保留）。
+    """把 /video/BVxxxx 改写成 /video/av<aid>，并去掉尾斜杠（?p=N 等参数原样保留）。
 
-    实测同一台 Vercel 机房 IP：抓 /video/av 稳定 200、抓 /video/BV 稳定 412，
-    老视频新视频一视同仁，交叉验证 6/6 vs 0/6；两者指向同一视频，改写后
-    B站特判与 yt-dlp 兜底都能过。
+    两个实测前提，均在同一台 Vercel 机房 IP 上交叉验证：
+    1. 抓 /video/av 稳定 200、抓 /video/BV 稳定 412，老视频新视频一视同仁；
+    2. 路径带尾斜杠时返回的页面不内嵌 __playinfo__，特判会拿不到 DASH 流。
     """
-    m = re.search(r"/video/(BV[0-9A-Za-z]{10})", url)
+    m = re.search(r"/video/(BV[0-9A-Za-z]{10}|av\d+)", url)
     if not m:
         return url
-    try:
-        aid = _bvid_to_avid(m.group(1))
-    except Exception:
-        return url
-    return url[:m.start(1)] + "av%d" % aid + url[m.end(1):]
+    key = m.group(1)
+    if key[:2] == "BV":
+        try:
+            key = "av%d" % _bvid_to_avid(key)
+        except Exception:
+            return url
+    tail = url[m.end(1):]
+    if tail[:1] == "/":
+        tail = tail[1:]
+    return url[:m.start(1)] + key + tail
 
 
 def _resolve_bilibili(page_url):
