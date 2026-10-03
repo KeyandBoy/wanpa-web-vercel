@@ -185,7 +185,9 @@ function safeSetTime(el, t) {
 }
 function onVideoPlay() {
   const a = audioRef.value
-  if (a && playerAudioSrc.value) a.play().catch(() => pushVideoLog('音频自动播放被浏览器拦截，点击播放按钮即可出声'))
+  if (a && playerAudioSrc.value && a.paused) {
+    a.play().catch(() => pushVideoLog('音频未自动出声，点击视频画面即可出声'))
+  }
 }
 function onVideoPause() {
   const a = audioRef.value
@@ -206,6 +208,9 @@ function onPlayerClick() {
   // 用户手势里补一次，绕过浏览器的有声自动播放策略
   const a = audioRef.value
   if (a && playerAudioSrc.value && a.paused) a.play().catch(() => {})
+}
+function onAudioError() {
+  pushVideoLog('音频流加载失败，当前可能无声')
 }
 
 const running = ref(false)
@@ -2164,6 +2169,8 @@ onBeforeUnmount(() => {
               autoplay
               playsinline
               class="player-video"
+              @click="onPlayerClick"
+              @pointerdown="onPlayerClick"
               @play="onVideoPlay"
               @pause="onVideoPause"
               @seeked="onVideoSeek"
@@ -2175,6 +2182,7 @@ onBeforeUnmount(() => {
               :src="playerAudioSrc"
               preload="auto"
               class="player-audio"
+              @error="onAudioError"
             ></audio>
           </div>
           <div class="player-tools">

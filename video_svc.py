@@ -311,6 +311,30 @@ def _is_sohu_page(url):
     return any(host == h or host.endswith("." + h) for h in ("sohu.com",))
 
 
+def _sohu_follow_dispatch(u, sess, referer):
+    """搜狐的 mp4PlayUrl 是调度地址（data.vod.itc.cn/ip?k=），回 JSON 才带真实 CDN mp4。
+
+    直接把它当媒体地址会让前端拿到 {"servers":[...]} 这坨 JSON，video 元素必然报错。
+    不是 JSON 就原样返回（有些条目本就是直链）。
+    """
+    try:
+        r = sess.get(u, timeout=15, headers={"Referer": referer})
+        if r.status_code != 200:
+            return u
+        body = (r.text or "").lstrip()
+        if not body.startswith("{") and not body.startswith("["):
+            return u
+        j = json.loads(body)
+        servers = j.get("servers") if isinstance(j, dict) else None
+        for s in servers or []:
+            v = (s or {}).get("url")
+            if isinstance(v, str) and v.startswith("http"):
+                return v
+    except Exception:
+        pass
+    return u
+
+
 def _resolve_sohu(page_url):
     """搜狐解析：抓原页面取 `var vid`，再调 videonew.do 拿 mp4PlayUrl 直链。
 
@@ -348,6 +372,7 @@ def _resolve_sohu(page_url):
     if not urls:
         raise ValueError("未拿到播放地址 play=%s status=%s"
                          % (meta.get("play"), meta.get("status")))
+    urls = [_sohu_follow_dispatch(u, sess, page_url) for u in urls]
 
     title = ""
     tm = re.search(r'<meta property="og:title" content="([^"]*)"', html_page)
