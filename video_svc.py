@@ -49,6 +49,23 @@ _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
 MAX_HEIGHT = 1080
 FORMAT = f"bv*[height<={MAX_HEIGHT}]+ba/b[height<={MAX_HEIGHT}]/b"
 
+# 通用搜索引擎（bing/yahoo）会带回各种外部站点，这里只留实测能解析出可播放直链的。
+# 逐条踩过的坑：douyin/tiktok 要浏览器 JS；iqiyi 页面对所有请求头都返回同一个通用首页，
+# 拿不到 data-player-tvid，几个公开接口回 Rule Block；youtube 撞 bot 验证，服务端嗅探
+# 抓到的其实是 Google 登录页（拉流回 text/html）。宁可少几条结果，也不给放不了的。
+_UNSUPPORTED_VIDEO_HOSTS = (
+    "douyin.com",
+    "tiktok.com",
+    "iqiyi.com",
+    "youtube.com",
+    "youtu.be",
+)
+
+
+def _is_unsupported_video_url(url):
+    low = (url or "").lower()
+    return any(h in low for h in _UNSUPPORTED_VIDEO_HOSTS)
+
 
 def _proxy():
     """出站代理。Vercel 上由 PROXY 环境变量或「设置」面板提供。"""
@@ -703,7 +720,7 @@ def search_bing_video(keyword, count):
     except Exception as e:
         raise ValueError(f"必应视频访问失败: {e}") from e
     # Douyin requires browser JS to generate play URLs — filter them out
-    _SKIP_VIDEO_HOSTS = ("douyin.com", "tiktok.com")
+    _SKIP_VIDEO_HOSTS = _UNSUPPORTED_VIDEO_HOSTS
     items = []
     for m in re.finditer(
         r'<a aria-label="([^"]*?)" data-dc="[^"]*" class="mc_vtvc_link[^"]*"[^>]*href="([^"]+)"',
@@ -730,7 +747,7 @@ def search_bing_video(keyword, count):
                 }
             )
     if not items:
-        raise ValueError("必应视频没有可播放的结果（抖音/TikTok需要浏览器Cookie）")
+        raise ValueError("必应视频没有可播放的结果（解析不了的站点已过滤）")
     _translate_items(items)
     return items
 
@@ -757,6 +774,8 @@ def search_yahoo(keyword, count):
         re.S,
     ):
         ref, inner = m.group(1), m.group(2)
+        if _is_unsupported_video_url(ref):
+            continue
         url = ref
         q = parse_qs(urlparse(url).query)
         img = q.get("imgurl")
