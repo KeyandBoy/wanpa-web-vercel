@@ -530,6 +530,54 @@ def _is_non_media_url(u):
     return any(m in low for m in _NON_MEDIA_MARKS)
 
 
+_NON_MEDIA_CT = ("text/", "application/json", "application/xhtml", "application/xml")
+
+
+def _probe_content_type(u, timeout=5):
+    """读 Content-Type。拿不到返回 None —— 不确定就别据此淘汰，避免误伤。"""
+    import requests
+
+    from http_util import HEADERS
+
+    try:
+        sess = requests.Session()
+        sess.trust_env = False
+        if not _is_domestic(u):
+            p = _proxy()
+            if p:
+                sess.proxies.update({"http": p, "https": p})
+        for method in ("HEAD", "GET"):
+            try:
+                headers = dict(HEADERS)
+                if method == "GET":
+                    headers["Range"] = "bytes=0-1"
+                r = sess.request(method, u, headers=headers, timeout=timeout, stream=True)
+                ct = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                r.close()
+                if ct:
+                    return ct
+            except Exception:
+                continue
+    except Exception:
+        return None
+    return None
+
+
+def _probe_is_media(u):
+    ct = _probe_content_type(u)
+    if not ct:
+        return True
+    return not any(ct.startswith(p) for p in _NON_MEDIA_CT)
+
+
+# 无扩展名但仍可能真是媒体的 URL 特征（CDN 常把地址藏在 query 里）
+_MEDIA_HINT_RE = re.compile(
+    r"videoplayback|manifest|m3u8|mpd|playlist|/hls|/dash|/streams?|/video|/media|"
+    r"\.php|file=|url=|ext_?url|player",
+    re.I,
+)
+
+
 def _sniff_candidates(url):
     """服务端嗅探（页面 + 1 层 iframe）"""
     import extract_svc
@@ -544,9 +592,42 @@ def _sniff_candidates(url):
                     cands.extend(extract_svc.sniff_sources(iframe, h2))
             except Exception:
                 continue
-    ordered = [c for c in extract_svc.score_and_dedup(cands) if not _is_non_media_url(c.get("url") or "")]
+    page = (url or "").rstrip("/")
+    ordered = [
+        c
+        for c in extract_svc.score_and_dedup(cands)
+        if not _is_non_media_url(c.get("url") or "")
+        and (c.get("url") or "").rstrip("/") != page
+    ]
+
+    # kind=js-key 这类 pattern 不看扩展名，会把 YouTube 页面里几十条 watch?v= 帮助页、
+    # 首页之类当媒体地址，前端一拉是整页 HTML。分三档：
+    #   有媒体扩展名       -> 照旧信任
+    #   无扩展名但像媒体   -> 并行探一次内容类型，回 text/* 的丢
+    #   无扩展名又不像媒体 -> 直接丢（零请求）
+    trusted, suspect = [], []
+    for c in ordered:
+        ext = (c.get("ext") or "").lower()
+        u = c.get("url") or ""
+        if ext and ext != "unknown":
+            trusted.append(c)
+        elif _MEDIA_HINT_RE.search(u):
+            suspect.append(c)
+
+    if suspect:
+        bad = set()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+            futs = {ex.submit(_probe_is_media, c.get("url") or ""): c.get("url") for c in suspect[:4]}
+            for f in concurrent.futures.as_completed(futs):
+                try:
+                    if not f.result():
+                        bad.add(futs[f])
+                except Exception:
+                    continue
+        trusted.extend(c for c in suspect if c.get("url") not in bad)
+
     title = extract_svc.guess_title(url, html) if html else None
-    return ordered, title
+    return trusted, title
 
 
 def resolve_video(url, mode="auto"):
