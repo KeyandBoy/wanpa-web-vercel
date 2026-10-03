@@ -52,20 +52,24 @@ FORMAT = f"bv*[height<={MAX_HEIGHT}]+ba/b[height<={MAX_HEIGHT}]/b"
 
 # 通用搜索引擎（bing/yahoo）会带回各种外部站点，这里只留实测能解析出可播放直链的。
 # 逐条踩过的坑：douyin/tiktok 要浏览器 JS；iqiyi 页面对所有请求头都返回同一个通用首页，
-# 拿不到 data-player-tvid，几个公开接口回 Rule Block；youtube 撞 bot 验证，服务端嗅探
-# 抓到的其实是 Google 登录页（拉流回 text/html）。宁可少几条结果，也不给放不了的。
+# 拿不到 data-player-tvid，几个公开接口回 Rule Block。宁可少几条结果，也不给放不了的。
+# YouTube 不在这里 —— 它配了 YOUTUBE_COOKIES 就能解析，见 _is_unsupported_video_url。
 _UNSUPPORTED_VIDEO_HOSTS = (
     "douyin.com",
     "tiktok.com",
     "iqiyi.com",
-    "youtube.com",
-    "youtu.be",
 )
 
 
 def _is_unsupported_video_url(url):
     low = (url or "").lower()
-    return any(h in low for h in _UNSUPPORTED_VIDEO_HOSTS)
+    if any(h in low for h in _UNSUPPORTED_VIDEO_HOSTS):
+        return True
+    if "youtube.com" in low or "youtu.be" in low:
+        # 没配 cookie 时 YouTube 必撞 bot 验证（换 client、换 IP 都试过），挡掉；
+        # 配上 YOUTUBE_COOKIES 就能解析，bing/yahoo 会自动把 YouTube 结果放回来。
+        return _youtube_cookiefile() is None
+    return False
 
 
 def _proxy():
