@@ -230,21 +230,6 @@ def _bili_av_url(url):
     return url[:m.start(1)] + key + tail
 
 
-_BILI_DEAD_TEXT = re.compile(r"稿件不可见|内容已失效|视频去哪了|该视频已失效|视频已失效")
-
-
-def _bili_no_playinfo_reason(html):
-    """页面没有 __playinfo__ 时，判断是内容失效还是风控/结构变更。
-
-    只认页面自己的文案。早先这里还会再问一次 view?aid=，但那个端点对机房 IP
-    会给同一套死码（正常视频 av80433022 也回 62012），拿它判下架会把能看的视频
-    说成已下架，误报比漏报伤得多 —— 已去掉。
-    """
-    if _BILI_DEAD_TEXT.search(html or ""):
-        return _DEAD_MSG
-    return "页面未内嵌 __playinfo__（可能被风控或页面结构变更）"
-
-
 def _resolve_bilibili(page_url):
     """B站解析：curl_cffi 抓视频页，读内嵌的 window.__playinfo__ 拿 DASH 双流。
 
@@ -273,7 +258,7 @@ def _resolve_bilibili(page_url):
     html = r.text or ""
     m = re.search(r"window\.__playinfo__\s*=\s*(\{.*?\})\s*</script>", html, re.S)
     if not m:
-        raise ValueError(_bili_no_playinfo_reason(html))
+        raise ValueError("页面未内嵌 __playinfo__（可能被风控或页面结构变更）")
     try:
         meta = json.loads(m.group(1))
     except Exception as e:
