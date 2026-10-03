@@ -679,34 +679,43 @@ _LOGIN_MARKS = (
     "会员专享", "需要会员", "login required",
 )
 
+# 内容本身没下架，是源站按地区掐了访问 —— Vercel 出口在海外，优酷对部分内容会回
+# "available in China only"。这种报人话，别把 yt-dlp 整串甩给用户。
+_REGION_MSG = "该内容受地区限制无法解析（源站限制了访问地区）"
+_REGION_MARKS = (
+    "in china only", "your region", "region restricted", "region-restricted",
+    "not available in your country", "仅限中国大陆", "该地区无法观看",
+)
+
+# 结论性消息按此优先级取一条：下架 > 需登录 > 地区限制
+_CONCLUSIVE_MSGS = (_DEAD_MSG, _LOGIN_MSG, _REGION_MSG)
+
 
 def _friendly_error(msg):
-    """把源站内容失效/登录限制翻译成人话，并剥掉 yt-dlp 让人去 GitHub 报 issue 的尾巴。"""
+    """把源站内容失效/访问限制翻译成人话，并剥掉 yt-dlp 让人去 GitHub 报 issue 的尾巴。"""
     low = (msg or "").lower()
-    if any(mk in low for mk in _DEAD_MARKS):
-        return _DEAD_MSG
-    if any(mk in low for mk in _LOGIN_MARKS):
-        return _LOGIN_MSG
+    for verdict, marks in ((_DEAD_MSG, _DEAD_MARKS), (_LOGIN_MSG, _LOGIN_MARKS), (_REGION_MSG, _REGION_MARKS)):
+        if any(mk in low for mk in marks):
+            return verdict
     msg = re.sub(r";?\s*please report this issue.*$", "", msg or "", flags=re.S | re.I)
     msg = re.sub(r"\s*(?:also\s+)?see\s+https://github\.com/yt-dlp.*$", "", msg, flags=re.S | re.I)
     return msg.strip(" ;")
 
 
 def _assemble_error(errors, empty="解析失败"):
-    """逐条友好化后拼接；判定出内容结论（下架/需登录）就说那一句，别让噪音盖过它。"""
-    out, seen, login = [], set(), False
+    """逐条友好化后拼接；判定出内容结论（下架/登录/地区）就说那一句，别让噪音盖过它。"""
+    out, seen, verdict = [], set(), None
     for e in errors:
         f = _friendly_error(e)
-        if f == _DEAD_MSG:
-            return _DEAD_MSG
-        if f == _LOGIN_MSG:
-            login = True
+        if f in _CONCLUSIVE_MSGS:
+            if verdict is None or _CONCLUSIVE_MSGS.index(f) < _CONCLUSIVE_MSGS.index(verdict):
+                verdict = f
             continue
         if f and f not in seen:
             seen.add(f)
             out.append(f)
-    if login:
-        return _LOGIN_MSG
+    if verdict:
+        return verdict
     return "; ".join(out) or empty
 
 
@@ -1401,44 +1410,51 @@ def _youku_row_item(cid, row):
     }
 
 
-def _youku_api_items(sess, keyword, count):
-    """优酷开放搜索接口（JSON），返回 (items, 接口可达)。
+def _youku_api_items(sess, keyword, count, timeout=10):
+    """优酷开放搜索接口（JSON）。返回 (items, 状态, 错误)。
+
+    状态三种：ok=拿到结果；net=请求本身没成（超时/断连，会重试一次后返回）；
+    bad=接口回了但不是预期结构（说明路径变了，该交给上层回退）。
 
     旧路线 so.youku.com/search_video 会撞阿里 X5 数风控：响应 200，正文却只是
     跳 `_____tmd_____/punish` 的脚本，HTTP 层看不出异常、内容层全空，程序化无解。
     这个接口不设防，直连就能拿到结构化结果。
     """
-    try:
-        r = sess.get(
-            "https://search.youku.com/api/search",
-            params={"pg": 1, "pz": max(count * 3, 25), "q": keyword},
-            timeout=15,
-        )
-        data = r.json()
-    except Exception:
-        return None, False
-    if (data.get("message") or "") != "success":
-        return None, False
-    rows = []
-    for comp in data.get("pageComponentList") or []:
-        for node in (comp.get("componentMap") or {}).values():
-            cid = node.get("componentId")
-            for row in node.get("data") or []:
-                item = _youku_row_item(cid, row)
-                if item:
-                    rows.append(item)
-    # 优酷自家内容排前（无需登录即可播的居多），站外聚合结果兜底补数
-    own = [i for i in rows if "v.youku.com" in i["url"]]
-    rest = [i for i in rows if "v.youku.com" not in i["url"]]
-    items, seen = [], set()
-    for it in own + rest:
-        if it["url"] in seen:
+    last_err = None
+    for _ in range(2):
+        try:
+            r = sess.get(
+                "https://search.youku.com/api/search",
+                params={"pg": 1, "pz": max(count * 3, 25), "q": keyword},
+                timeout=timeout,
+            )
+            data = r.json()
+        except Exception as e:
+            last_err = e
             continue
-        seen.add(it["url"])
-        items.append(it)
-        if len(items) >= count:
-            break
-    return items, True
+        if (data.get("message") or "") != "success":
+            return None, "bad", None
+        rows = []
+        for comp in data.get("pageComponentList") or []:
+            for node in (comp.get("componentMap") or {}).values():
+                cid = node.get("componentId")
+                for row in node.get("data") or []:
+                    item = _youku_row_item(cid, row)
+                    if item:
+                        rows.append(item)
+        # 优酷自家内容排前（无需登录即可播的居多），站外聚合结果兜底补数
+        own = [i for i in rows if "v.youku.com" in i["url"]]
+        rest = [i for i in rows if "v.youku.com" not in i["url"]]
+        items, seen = [], set()
+        for it in own + rest:
+            if it["url"] in seen:
+                continue
+            seen.add(it["url"])
+            items.append(it)
+            if len(items) >= count:
+                break
+        return items, "ok", None
+    return None, "net", last_err
 
 
 def search_youku(keyword, count):
@@ -1447,17 +1463,21 @@ def search_youku(keyword, count):
     sess = cr.Session(
         impersonate="chrome131",
         headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Referer": "https://www.youku.com/",
         },
     )
-    items, api_ok = _youku_api_items(sess, keyword, count)
-    if api_ok:
+    items, status, err = _youku_api_items(sess, keyword, count)
+    if status == "ok":
         if not items:
             raise ValueError("优酷没有搜索到结果")
         _translate_items(items)
         return items
+    if status == "net":
+        # 真实的网络问题就照实说；回退到老搜索页必然撞风控，只会把原因盖掉
+        raise ValueError(f"优酷搜索失败（网络异常）: {err}")
 
-    # 接口不可用时回退老的搜索页；它通常会被数风控拦下，错误信息如实告知
+    # 接口结构变了才回退老搜索页；它通常会被数风控拦下，错误信息如实告知
     try:
         sess.get("https://www.youku.com/", timeout=12)
         r = sess.get("https://so.youku.com/search_video/q_" + quote(keyword), timeout=12)
