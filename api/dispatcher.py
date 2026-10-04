@@ -64,6 +64,19 @@ def _load(modname):
     return m
 
 
+class _HeadSink:
+    """HEAD 兜底用的假 wfile：把 do_GET 的输出全接住，最后只回放头部。"""
+
+    def __init__(self):
+        self.buf = bytearray()
+
+    def write(self, b):
+        self.buf.extend(b)
+
+    def flush(self):
+        pass
+
+
 class handler(BaseHTTPRequestHandler):
     def _dispatch(self):
         path = self.path.split("?")[0]
@@ -73,7 +86,8 @@ class handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if self.command != "HEAD":
+                self.wfile.write(body)
             return
         parts = [p for p in path.strip("/").split("/") if p]
         name = parts[1] if len(parts) >= 2 and parts[0] == "api" else ""
@@ -84,7 +98,8 @@ class handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if self.command != "HEAD":
+                self.wfile.write(body)
             return
         try:
             h = _load(modname).handler
@@ -93,7 +108,9 @@ class handler(BaseHTTPRequestHandler):
             inst.requestline = self.requestline
             inst.request_version = self.request_version
             inst.command = self.command
-            if self.command == "GET":
+            if self.command == "HEAD":
+                self._head_dispatch(inst)
+            elif self.command == "GET":
                 inst.do_GET()
             else:
                 inst.do_POST()
@@ -106,11 +123,28 @@ class handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                if self.command != "HEAD":
+                    self.wfile.write(body)
             except Exception:
                 pass
 
+    def _head_dispatch(self, inst):
+        """Vercel 单入口下 HEAD 的分发：子模块有 do_HEAD 就用它的，
+        没有就跑一次 do_GET、把输出掐在头部回放（Content-Length 照常给出）。"""
+        if hasattr(inst, "do_HEAD"):
+            inst.do_HEAD()
+            return
+        sink = _HeadSink()
+        inst.wfile = sink
+        inst.do_GET()
+        data = bytes(sink.buf)
+        head = data.split(b"\r\n\r\n", 1)[0]
+        self.wfile.write(head + b"\r\n\r\n")
+
     def do_GET(self):
+        self._dispatch()
+
+    def do_HEAD(self):
         self._dispatch()
 
     def do_POST(self):
