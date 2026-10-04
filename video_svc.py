@@ -1105,15 +1105,30 @@ def _parse_pornhub_cards(html):
     return items
 
 
+def _pornhub_degraded(html):
+    """Pornhub 按出口 IP 信誉降级时只回推荐页：卡片还是有，但 title 只剩 Pornhub、不含 ' Porn Videos'。"""
+    if not html:
+        return False
+    return not re.search(r"<title>[^<]*Porn\s*Videos", html, re.I)
+
+
+_PROXY_HINT = (
+    "请配置 PROXY=http://user:pass@host:port"
+    "（Vercel Environment Variables 或站内配置面板）后重试"
+)
+
+
 def search_pornhub(keyword, count):
     """Pornhub 搜索：直连 HTML 解析卡片。
 
     以前走 yt-dlp —— 它的普通 TLS 指纹在 Vercel 出口会被降级成「title 只有 Pornhub」
     的推荐页，搜出来全是不相关的。改用 curl_cffi 仿 chrome131 后才是真搜索页。
+    数据中心出口（Vercel/jina/allorigins）连指纹都救不了，必须走 PROXY 出口。
     """
     kw = to_en(keyword)
     url = "https://www.pornhub.com/video/search?search=" + quote(kw)
     items = []
+    html = ""
     try:
         from curl_cffi import requests as creq
 
@@ -1123,16 +1138,23 @@ def search_pornhub(keyword, count):
             kw_hdr["proxies"] = {"http": p, "https": p}
         r = creq.get(url, **kw_hdr)
         if getattr(r, "status_code", 200) == 200 and r.text:
-            items = _parse_pornhub_cards(r.text)
+            html = r.text
+            items = _parse_pornhub_cards(html)
     except Exception:
         items = []
     if not items:
         try:
             r = _fetch_proxied(url)
-            items = _parse_pornhub_cards(r.text)
+            html = r.text
+            items = _parse_pornhub_cards(html)
         except Exception as e:
             if not items:
                 raise ValueError(f"Pornhub 搜索失败: {e}") from e
+    if _pornhub_degraded(html):
+        raise ValueError(
+            "PornHub 对当前网络出口返回了降级推荐页（数据中心 IP 被源站降级，搜不到相关结果）。"
+            + _PROXY_HINT
+        )
     items = items[:count]
     if not items:
         raise ValueError("Pornhub 没有解析到结果")
@@ -1319,7 +1341,7 @@ def search_xhamster(keyword, count):
         except Exception:
             pass
     if not items:
-        raise ValueError("xHamster 没有解析到结果（源站可能在拦截当前网络出口）")
+        raise ValueError("xHamster 没有解析到结果（源站在拦截当前网络出口，或关键词无结果）。" + _PROXY_HINT)
     items = items[:count]
     _translate_items(items)
     return items
