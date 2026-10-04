@@ -85,6 +85,13 @@ def _proxy_dict():
     return {"http": p, "https": p} if p else None
 
 
+def _adult_proxy():
+    """成人源出站代理：ADULT_PROXY 只影响成人源，未配则回落全局 PROXY。"""
+    from env_utils import env as _env
+
+    return _env("ADULT_PROXY") or _proxy()
+
+
 # m3u8 直链 -> 页面 URL 映射（用于给 CDN 分片补正确的 Referer）
 _ref_cache = {}
 _ref_lock = threading.Lock()
@@ -1113,8 +1120,8 @@ def _pornhub_degraded(html):
 
 
 _PROXY_HINT = (
-    "请配置 PROXY=http://user:pass@host:port"
-    "（Vercel Environment Variables 或站内配置面板）后重试"
+    "请配置 ADULT_PROXY=http://user:pass@host:port"
+    "（只影响成人源，Vercel Environment Variables；也可配全局 PROXY）后重试"
 )
 
 
@@ -1132,7 +1139,7 @@ def search_pornhub(keyword, count):
     try:
         from curl_cffi import requests as creq
 
-        p = _proxy()
+        p = _adult_proxy()
         kw_hdr = {"headers": _FETCH_HEADERS, "timeout": 25, "impersonate": "chrome131"}
         if p:
             kw_hdr["proxies"] = {"http": p, "https": p}
@@ -1144,7 +1151,7 @@ def search_pornhub(keyword, count):
         items = []
     if not items:
         try:
-            r = _fetch_proxied(url)
+            r = _fetch_proxied(url, adult=True)
             html = r.text
             items = _parse_pornhub_cards(html)
         except Exception as e:
@@ -1168,15 +1175,15 @@ _FETCH_HEADERS = {
 }
 
 
-def _fetch_proxied(url, params=None, timeout=25, force_curl=False):
+def _fetch_proxied(url, params=None, timeout=25, force_curl=False, adult=False):
     """抓页面：requests 优先（失败回退 curl_cffi），force_curl=True 时直接仿 chrome131。
 
     Pornhub/xHamster 这类站会按 TLS 指纹识别普通 Python 连接，只给降级页或空壳页；
-    curl_cffi 伪装浏览器指纹才能拿到正常搜索结果。
+    curl_cffi 伪装浏览器指纹才能拿到正常搜索结果。adult=True 走 ADULT_PROXY（只代理成人源）。
     """
     import requests
 
-    p = _proxy()
+    p = _adult_proxy() if adult else _proxy()
     proxies = {"http": p, "https": p} if p else None
     err = None
     if not force_curl:
@@ -1216,7 +1223,7 @@ def _fetch_any(url, params=None, timeout=25):
 def search_xnxx(keyword, count):
     keyword = to_en(keyword)
     try:
-        r = _fetch_proxied("https://www.xnxx.com/search/" + quote(keyword))
+        r = _fetch_proxied("https://www.xnxx.com/search/" + quote(keyword), adult=True)
     except Exception as e:
         raise ValueError(f"XNXX 搜索失败: {e}") from e
     items = []
@@ -1244,7 +1251,7 @@ def search_xvideos(keyword, count):
     """XVIDEOS 搜索（2026 页面结构）：/video.{eid}/slug 卡片 + data-src 缩略图 + 内嵌时长"""
     keyword = to_en(keyword)
     try:
-        r = _fetch_proxied("https://www.xvideos.com/?k=" + quote(keyword))
+        r = _fetch_proxied("https://www.xvideos.com/?k=" + quote(keyword), adult=True)
     except Exception as e:
         raise ValueError(f"XVIDEOS 搜索失败: {e}") from e
     items = []
@@ -1329,14 +1336,14 @@ def search_xhamster(keyword, count):
     keyword = to_en(keyword)
     params = {"q": keyword}
     try:
-        r = _fetch_proxied("https://xhamster.com/search", params=params)
+        r = _fetch_proxied("https://xhamster.com/search", params=params, adult=True)
     except Exception as e:
         raise ValueError(f"xHamster 搜索失败: {e}") from e
     items = _parse_xhamster_cards(r.text)
     if not items:
         # 普通 Python 指纹会被换成空壳挑战页（200 但零结果），改用 curl_cffi 再试一次
         try:
-            r = _fetch_proxied("https://xhamster.com/search", params=params, force_curl=True)
+            r = _fetch_proxied("https://xhamster.com/search", params=params, force_curl=True, adult=True)
             items = _parse_xhamster_cards(r.text)
         except Exception:
             pass
@@ -1351,7 +1358,7 @@ def search_thothub(keyword, count):
     keyword = to_en(keyword)
     try:
         kw = quote(re.sub(r"\s+", "+", keyword), safe="+")
-        r = _fetch_proxied("https://thothub.vip/search/" + kw + "/")
+        r = _fetch_proxied("https://thothub.vip/search/" + kw + "/", adult=True)
     except Exception as e:
         raise ValueError(f"ThotHub 搜索失败: {e}") from e
     items = []
