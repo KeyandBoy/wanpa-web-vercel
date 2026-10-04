@@ -55,7 +55,8 @@ class Router(BaseHTTPRequestHandler):
         for k, v in headers.items():
             self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _route_api(self):
         parts = [p for p in self.path.split("?")[0].strip("/").split("/") if p]
@@ -81,6 +82,12 @@ class Router(BaseHTTPRequestHandler):
                 inst.command = self.command
                 if self.command == "GET":
                     inst.do_GET()
+                elif self.command == "HEAD":
+                    # 与线上一致：HEAD 走 handler 自己的 do_HEAD（缺了会 501）
+                    if hasattr(inst, "do_HEAD"):
+                        inst.do_HEAD()
+                    else:
+                        raise RuntimeError("handler 缺少 do_HEAD: " + modname)
                 else:
                     inst.do_POST()
             except Exception:
@@ -112,6 +119,9 @@ class Router(BaseHTTPRequestHandler):
         self._send(200, body, {"Content-Type": ctype, "Content-Length": str(len(body))})
 
     def do_GET(self):
+        self._handle()
+
+    def do_HEAD(self):
         self._handle()
 
     def do_POST(self):

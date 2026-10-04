@@ -28,13 +28,37 @@ def _proxy():
 
 
 def _fetch(url, timeout=20):
+    """抓页面（不带 Referer），手动跟随跳转。
+
+    源站对 `/search/<关键词>`（缺尾斜杠）会回 301，而 Location 被站方配置写成了
+    `https://host:65037/...` —— 客户端照着连那个端口只会超时，然后报一串看不懂的
+    连接池错误。这里先按标准端口纠正 Location 再跳；端口/主机不正常的直接拒绝。
+    """
     proxies = {"http": _proxy(), "https": _proxy()} if _proxy() else None
-    r = requests.get(
-        url,
-        headers={"User-Agent": _UA, "Referer": SITE + "/"},
-        timeout=timeout,
-        proxies=proxies,
-    )
+    headers = {"User-Agent": _UA}
+    from urllib.parse import urljoin, urlparse, urlunparse
+
+    cur = url
+    for _ in range(6):
+        r = requests.get(
+            cur,
+            headers=headers,
+            timeout=timeout,
+            proxies=proxies,
+            allow_redirects=False,
+        )
+        if r.status_code not in (301, 302, 303, 307, 308):
+            break
+        loc = (r.headers.get("Location") or "").strip()
+        if not loc:
+            break
+        nxt = urljoin(cur, loc)
+        p = urlparse(nxt)
+        if p.scheme not in ("http", "https") or not p.hostname:
+            raise ValueError("源站返回了异常跳转 %s（疑似反爬陷阱），已拒绝跟随后继续" % nxt)
+        if p.port and p.port not in (80, 443):
+            nxt = urlunparse(p._replace(netloc=p.hostname))
+        cur = nxt
     r.raise_for_status()
     return r
 
@@ -52,7 +76,8 @@ def search_doll(keyword, count):
     """搜索玩偶姐姐视频（默认展示最新）"""
     items = []
     if keyword:
-        url = SITE + "/search/" + _sanitize_kw(keyword)
+        # 带尾斜杠：缺斜杠时源站回 301，且 Location 会被写成带 :65037 的坏地址
+        url = SITE + "/search/" + _sanitize_kw(keyword) + "/"
     else:
         url = SITE
     try:

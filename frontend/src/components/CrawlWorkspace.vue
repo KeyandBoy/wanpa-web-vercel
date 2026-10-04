@@ -162,6 +162,9 @@ function destroyHls() {
 
 // 用户意图：视频该不该有声。暂停/切换都要清掉，否则迟到的 play() 会把声音又带出来
 let audioWantPlay = false
+// 音频出错/出声失败每个会话只提示一次（一次点击会冒泡出好几次 handler，不能刷屏）
+let audioErrorLogged = false
+let audioNotified = false
 
 function resetPlayer() {
   destroyHls()
@@ -172,6 +175,8 @@ function resetPlayer() {
   playerReady.value = false
   playerHint.value = ''
   audioWantPlay = false
+  audioErrorLogged = false
+  audioNotified = false
 }
 
 // 双流同步：视频元素是主控（用户操作它），音频元素静默跟随
@@ -197,7 +202,11 @@ function playAudio() {
       .then(() => {
         if (!audioWantPlay) a.pause()
       })
-      .catch(() => pushVideoLog('音频未自动出声，点击视频画面即可出声'))
+      .catch(() => {
+        if (audioNotified) return
+        audioNotified = true
+        pushVideoLog('音频未自动出声，点击视频画面即可出声')
+      })
   }
 }
 function onVideoPlay() {
@@ -232,7 +241,13 @@ function onPlayerClick() {
   playAudio()
 }
 function onAudioError() {
-  pushVideoLog('音频流加载失败，当前可能无声')
+  // 每个会话只记一次：error.code 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED
+  if (audioErrorLogged) return
+  audioErrorLogged = true
+  const a = audioRef.value
+  const code = a && a.error ? a.error.code : 'n/a'
+  const net = a ? a.networkState : 'n/a'
+  pushVideoLog(`音频流加载失败，当前可能无声 (error.code=${code}, networkState=${net})`)
 }
 
 const running = ref(false)
@@ -2187,8 +2202,6 @@ onBeforeUnmount(() => {
               autoplay
               playsinline
               class="player-video"
-              @click="onPlayerClick"
-              @pointerdown="onPlayerClick"
               @play="onVideoPlay"
               @playing="onVideoPlaying"
               @pause="onVideoPause"

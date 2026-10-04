@@ -256,18 +256,22 @@ def _resolve_bilibili(page_url):
     if r.status_code != 200:
         raise ValueError("页面 HTTP %s" % r.status_code)
     html = r.text or ""
+    title = ""
+    tm = re.search(r"<title>(.*?)</title>", html, re.S)
+    if tm:
+        title = re.sub(r"[_\-|]\s*哔哩哔哩.*$", "", tm.group(1)).strip()
     m = re.search(r"window\.__playinfo__\s*=\s*(\{.*?\})\s*</script>", html, re.S)
     if not m:
+        # av 号不存在/稿件已下架时页面同样不内嵌 playinfo，但标题会是「视频去哪了呢？」
+        # 这类下架文案 —— 先按标题判死，别把风控原文甩给用户（_assemble_error 会压掉噪音）。
+        if title and any(mk in title.lower() for mk in _DEAD_MARKS):
+            raise ValueError(_DEAD_MSG)
         raise ValueError("页面未内嵌 __playinfo__（可能被风控或页面结构变更）")
     try:
         meta = json.loads(m.group(1))
     except Exception as e:
         raise ValueError("__playinfo__ 解析失败: %s" % e)
 
-    title = ""
-    tm = re.search(r"<title>(.*?)</title>", html, re.S)
-    if tm:
-        title = re.sub(r"[_\-|]\s*哔哩哔哩.*$", "", tm.group(1)).strip()
     duration = None
     dm = re.search(r'"videoData"\s*:\s*\{.{0,4000}?"duration":\s*(\d+)', html, re.S)
     if dm:
@@ -672,7 +676,7 @@ _DEAD_MARKS = (
 )
 
 # 内容能看但要账号：优酷 -3007 之类。YouTube 的「Sign in to confirm you're not a bot」
-# 刻意不在此列 —— 那是验证问题不是内容限制，得留着提示用户配 cookie。
+# 不是内容限制，是没配 Cookie —— 在 _friendly_error 里单独翻成人话，引导去配 YOUTUBE_COOKIES。
 _LOGIN_MSG = "该内容需要登录或会员才能观看（源站限制）"
 _LOGIN_MARKS = (
     "-3007", "请先登录", "需要登录", "请登录后", "观看此节目",
@@ -697,8 +701,13 @@ def _friendly_error(msg):
     for verdict, marks in ((_DEAD_MSG, _DEAD_MARKS), (_LOGIN_MSG, _LOGIN_MARKS), (_REGION_MSG, _REGION_MARKS)):
         if any(mk in low for mk in marks):
             return verdict
+    if "not a bot" in low or "confirm you" in low:
+        return "YouTube 需配置 Cookie 才能解析（环境变量 YOUTUBE_COOKIES）"
+    if "keyerror" in low and "bvid" in low:
+        return "不是 B站视频链接（请粘贴完整的 B站视频地址）"
     msg = re.sub(r";?\s*please report this issue.*$", "", msg or "", flags=re.S | re.I)
     msg = re.sub(r"\s*(?:also\s+)?see\s+https://github\.com/yt-dlp.*$", "", msg, flags=re.S | re.I)
+    msg = re.sub(r"^\s*an extractor error has occurred[\s.:]*", "", msg, flags=re.I)
     return msg.strip(" ;")
 
 
@@ -883,10 +892,17 @@ def _base_opts(url=None):
 
 
 def search_youtube(keyword, count):
+    yt_dlp = _require_yt_dlp()  # 先说依赖问题，部署缺 yt-dlp 时不该让人去配 Cookie
+    ck = _youtube_cookiefile()
+    if not ck:
+        # 没配 Cookie 时搜索照样能出候选，但点开解析必报「confirm you're not a bot」，
+        # 与其给一堆必失败的结果，不如一次说清楚要配什么。
+        raise ValueError(
+            "YouTube 源未配置 Cookie（环境变量 YOUTUBE_COOKIES，Netscape 格式 cookie.txt）"
+        )
     opts = dict(_base_opts())
-    opts.update({"extract_flat": "in_playlist", "playlist_items": f"1-{count}"})
+    opts.update({"extract_flat": "in_playlist", "playlist_items": f"1-{count}", "cookiefile": ck})
     try:
-        yt_dlp = _require_yt_dlp()
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"ytsearch{count}:{keyword}", download=False)
     except Exception as e:
@@ -1058,61 +1074,119 @@ def search_yahoo(keyword, count):
     return items
 
 
-def search_pornhub(keyword, count):
-    opts = dict(_base_opts())
-    opts.update({"extract_flat": "in_playlist", "playlist_items": f"1-{count}"})
-    url = "https://www.pornhub.com/video/search?search=" + quote(to_en(keyword))
-    try:
-        yt_dlp = _require_yt_dlp()
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except Exception as e:
-        raise ValueError(f"Pornhub 搜索失败: {e}") from e
+def _parse_pornhub_cards(html):
+    """解析 pornhub 搜索页的 <li class="pcVideoListItem"> 卡片 → 标题/播放地址/缩略图。"""
     items = []
-    for e in (info.get("entries") or [])[:count]:
-        if not e or not e.get("url"):
+    seen = set()
+    for card in re.findall(r'<li class="pcVideoListItem.*?</li>', html, re.S):
+        vk = re.search(r'href="/view_video\.php\?viewkey=([0-9a-z]+)"[^>]*title="([^"]*)"', card)
+        if vk:
+            vkey, title = vk.group(1), vk.group(2)
+        else:
+            vk2 = re.search(r'viewkey=([0-9a-z]+)', card)
+            if not vk2:
+                continue
+            vkey, title = vk2.group(1), ""
+        if vkey in seen:
             continue
+        seen.add(vkey)
+        im = re.search(r'<img[^>]+(?:data-image|src)="([^"]+)"', card)
+        dur = re.search(r'<var[^>]+class="duration"[^>]*>\s*([^<]+?)\s*</var>', card)
         items.append(
             {
-                "title": (e.get("title") or keyword)[:200],
-                "url": e.get("url"),
+                "title": title[:200],
+                "url": "https://www.pornhub.com/view_video.php?viewkey=" + vkey,
                 "duration": None,
-                "duration_text": "",
-                "thumb": e.get("thumbnails", [{}])[-1].get("url") if e.get("thumbnails") else None,
+                "duration_text": dur.group(1) if dur else "",
+                "thumb": im.group(1) if im else None,
                 "source": "pornhub",
             }
         )
+    return items
+
+
+def search_pornhub(keyword, count):
+    """Pornhub 搜索：直连 HTML 解析卡片。
+
+    以前走 yt-dlp —— 它的普通 TLS 指纹在 Vercel 出口会被降级成「title 只有 Pornhub」
+    的推荐页，搜出来全是不相关的。改用 curl_cffi 仿 chrome131 后才是真搜索页。
+    """
+    kw = to_en(keyword)
+    url = "https://www.pornhub.com/video/search?search=" + quote(kw)
+    items = []
+    try:
+        from curl_cffi import requests as creq
+
+        p = _proxy()
+        kw_hdr = {"headers": _FETCH_HEADERS, "timeout": 25, "impersonate": "chrome131"}
+        if p:
+            kw_hdr["proxies"] = {"http": p, "https": p}
+        r = creq.get(url, **kw_hdr)
+        if getattr(r, "status_code", 200) == 200 and r.text:
+            items = _parse_pornhub_cards(r.text)
+    except Exception:
+        items = []
+    if not items:
+        try:
+            r = _fetch_proxied(url)
+            items = _parse_pornhub_cards(r.text)
+        except Exception as e:
+            if not items:
+                raise ValueError(f"Pornhub 搜索失败: {e}") from e
+    items = items[:count]
+    if not items:
+        raise ValueError("Pornhub 没有解析到结果")
     _translate_items(items)
     return items
 
 
-def _fetch_proxied(url, params=None, timeout=25):
+_FETCH_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def _fetch_proxied(url, params=None, timeout=25, force_curl=False):
+    """抓页面：requests 优先（失败回退 curl_cffi），force_curl=True 时直接仿 chrome131。
+
+    Pornhub/xHamster 这类站会按 TLS 指纹识别普通 Python 连接，只给降级页或空壳页；
+    curl_cffi 伪装浏览器指纹才能拿到正常搜索结果。
+    """
     import requests
 
     p = _proxy()
     proxies = {"http": p, "https": p} if p else None
-    r = requests.get(
-        url,
-        params=params,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        },
-        timeout=timeout,
-        proxies=proxies,
-    )
-    r.raise_for_status()
-    return r
+    err = None
+    if not force_curl:
+        try:
+            r = requests.get(
+                url,
+                params=params,
+                headers=_FETCH_HEADERS,
+                timeout=timeout,
+                proxies=proxies,
+            )
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            err = e
+    try:
+        from curl_cffi import requests as creq
+
+        kw = {"headers": _FETCH_HEADERS, "timeout": timeout, "impersonate": "chrome131"}
+        if proxies:
+            kw["proxies"] = proxies
+        return creq.get(url, params=params, **kw)
+    except Exception as e:
+        raise err or e
 
 
 def _fetch_any(url, params=None, timeout=25):
     """直连优先，失败后走代理（用于国外可直连站点）"""
     import requests
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    }
     try:
-        return requests.get(url, params=params, headers=headers, timeout=timeout)
+        return requests.get(url, params=params, headers=_FETCH_HEADERS, timeout=timeout)
     except Exception:
         return _fetch_proxied(url, params=params, timeout=timeout)
 
@@ -1195,21 +1269,14 @@ def search_xvideos(keyword, count):
     return items
 
 
-def search_xhamster(keyword, count):
-    keyword = to_en(keyword)
-    try:
-        r = _fetch_proxied("https://xhamster.com/search", params={"q": keyword})
-    except Exception as e:
-        raise ValueError(f"xHamster 搜索失败: {e}") from e
+def _parse_xhamster_cards(text):
+    """解析 xHamster 搜索页：老结构 aria-label 卡 + 新结构 video-thumb-info__name 卡。"""
     items = []
     seen = set()
-    for m in re.finditer(
-        r'href="(https?://(?:www\.)?xhamster\.com/videos/[^"]+)"[^>]*aria-label="([^"]*)"',
-        r.text,
-    ):
-        url, title = m.group(1), m.group(2)
-        if url in seen:
-            continue
+
+    def _add(url, title):
+        if not url or url in seen:
+            return
         seen.add(url)
         items.append(
             {
@@ -1221,10 +1288,39 @@ def search_xhamster(keyword, count):
                 "source": "xhamster",
             }
         )
-        if len(items) >= count:
-            break
+
+    for m in re.finditer(
+        r'href="(https?://(?:www\.)?xhamster\.com/videos/[^"]+)"[^>]*aria-label="([^"]*)"',
+        text,
+    ):
+        _add(m.group(1), m.group(2))
+    # 新版页面把标题挪进 <a class="...video-thumb-info__name..." href=... title=...>
+    for m in re.finditer(
+        r'<a[^>]+class="[^"]*video-thumb-info__name[^"]*"[^>]+href="([^"]+)"[^>]+title="([^"]*)"',
+        text,
+    ):
+        _add(m.group(1), m.group(2))
+    return items
+
+
+def search_xhamster(keyword, count):
+    keyword = to_en(keyword)
+    params = {"q": keyword}
+    try:
+        r = _fetch_proxied("https://xhamster.com/search", params=params)
+    except Exception as e:
+        raise ValueError(f"xHamster 搜索失败: {e}") from e
+    items = _parse_xhamster_cards(r.text)
     if not items:
-        raise ValueError("xHamster 没有解析到结果")
+        # 普通 Python 指纹会被换成空壳挑战页（200 但零结果），改用 curl_cffi 再试一次
+        try:
+            r = _fetch_proxied("https://xhamster.com/search", params=params, force_curl=True)
+            items = _parse_xhamster_cards(r.text)
+        except Exception:
+            pass
+    if not items:
+        raise ValueError("xHamster 没有解析到结果（源站可能在拦截当前网络出口）")
+    items = items[:count]
     _translate_items(items)
     return items
 
