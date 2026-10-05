@@ -424,7 +424,7 @@ export const VIDEO_SOURCES = [
   {
     id: 'pornhub',
     label: 'Pornhub',
-    desc: '成人内容！Pornhub 站内搜索，在线播放封顶 1080p；需海外节点，且节点所在国家不能屏蔽成人站（如韩国会直接掐断）。\n\n注意：搜索结果不含时长信息，时长过滤请选「不限」；用链接解析 tab 粘贴视频页链接则不受此限制。\n\n出站代理：Vercel Environment Variables 里加 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配则回落全局 PROXY）；未配代理时数据中心出口会被源站降级成无关推荐页。',
+    desc: '成人内容！Pornhub 站内搜索，在线播放封顶 1080p；需海外节点，且节点所在国家不能屏蔽成人站（如韩国会直接掐断）。\n\n注意：搜索结果不含时长信息，时长过滤请选「不限」；用链接解析 tab 粘贴视频页链接则不受此限制。\n\n出站代理：Vercel Environment Variables 里加 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配则回落全局 PROXY）。未配代理时站内页会被源站降级，搜索会自动改走搜索通道兜底——照样能搜到能播，只是结果没有缩略图。',
     tag: '成人',
     adult: true,
     tier: 'plus'
@@ -456,7 +456,7 @@ export const VIDEO_SOURCES = [
   {
     id: 'xhamster',
     label: 'xHamster',
-    desc: '成人内容！xHamster 站内搜索，在线播放封顶 1080p；需海外节点。\n\n搜索结果不含时长，时长过滤请选「不限」。\n\n出站代理：Vercel 环境变量 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配则回落全局 PROXY）。',
+    desc: '成人内容！xHamster 站内搜索，在线播放封顶 1080p；需海外节点。\n\n搜索结果不含时长，时长过滤请选「不限」。\n\n出站代理：Vercel 环境变量 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配则回落全局 PROXY）。未配代理且站内返回空壳页时会自动改走搜索通道兜底——照样能搜到能播，只是结果没有缩略图。',
     tag: '成人',
     adult: true,
     tier: 'plus'

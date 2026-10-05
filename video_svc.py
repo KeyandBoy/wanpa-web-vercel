@@ -1125,17 +1125,84 @@ _PROXY_HINT = (
 )
 
 
+def _serp_adult(host, keyword):
+    """站内页被降级/给空壳时的兜底：用 Brave 搜索拿真链接与标题。
+
+    机房 IP 访问 Pornhub/xHamster 自己的搜索页会被降级，但 Brave 对机房出口很友好
+    （实测直连返回 20 条 view_video / videos 直链）；Bing 对成人 site: 查询直接屏蔽无关站，
+    DDG/searx/startpage 则弹验证，都不可用。限流 429 时歇 3 秒再试一次。
+    缩略图需要站内 pid，兜底时置 None。
+    """
+    site = {
+        "pornhub": "site:pornhub.com/view_video.php",
+        "xhamster": "site:xhamster.com/videos",
+    }.get(host, "site:" + host + ".com")
+    for attempt in range(2):
+        try:
+            r = _fetch_proxied(
+                "https://search.brave.com/search",
+                params={"q": site + " " + keyword},
+                timeout=25,
+                adult=True,
+            )
+            if getattr(r, "status_code", 200) == 200:
+                items = _parse_serp_brave(r.text or "", host)
+                if items:
+                    return items
+        except Exception:
+            pass
+        if attempt == 0:
+            time.sleep(3)
+    return []
+
+
+def _parse_serp_brave(text, host):
+    """解析 Brave 搜索结果页里的站内直链（标题取结果块 title 属性，剥域名后缀）。"""
+    out, seen = [], set()
+    pat = r'<a[^>]+href="(https?://[^"]*?' + re.escape(host) + r'[^"]*?)"[^>]*>(.*?)</a>'
+    for m in re.finditer(pat, text, re.S):
+        url, inner = m.group(1), m.group(2)
+        if "view_video.php?viewkey=" not in url and "/videos/" not in url:
+            continue
+        if url in seen:
+            continue
+        tm = re.search(r'<div class="title [^"]*"[^>]*title="([^"]*)"', inner) or re.search(
+            r'<div class="title [^"]*"[^>]*>([^<]+)', inner
+        )
+        title = (tm.group(1) if tm else "").strip()
+        if not title:
+            continue
+        for suf in (" - Pornhub.com", " | Pornhub.com", " - xHamster", " | xHamster"):
+            if title.endswith(suf):
+                title = title[: -len(suf)]
+        seen.add(url)
+        out.append(
+            {
+                "title": title[:200],
+                "url": url,
+                "duration": None,
+                "duration_text": "",
+                "thumb": None,
+                "source": host,
+            }
+        )
+    return out
+
+
+
 def search_pornhub(keyword, count):
     """Pornhub 搜索：直连 HTML 解析卡片。
 
     以前走 yt-dlp —— 它的普通 TLS 指纹在 Vercel 出口会被降级成「title 只有 Pornhub」
     的推荐页，搜出来全是不相关的。改用 curl_cffi 仿 chrome131 后才是真搜索页。
-    数据中心出口（Vercel/jina/allorigins）连指纹都救不了，必须走 PROXY 出口。
+    数据中心出口连指纹都救不了（连 Jina/allorigins 也一样降级），站内页降级时改走
+    Brave 搜索通道兜底；配 ADULT_PROXY 则直连站内页（有缩略图/时长）。
     """
     kw = to_en(keyword)
     url = "https://www.pornhub.com/video/search?search=" + quote(kw)
     items = []
     html = ""
+    fetch_err = None
     try:
         from curl_cffi import requests as creq
 
@@ -1149,22 +1216,28 @@ def search_pornhub(keyword, count):
             items = _parse_pornhub_cards(html)
     except Exception:
         items = []
-    if not items:
+    if not items and not html:
         try:
             r = _fetch_proxied(url, adult=True)
             html = r.text
             items = _parse_pornhub_cards(html)
         except Exception as e:
-            if not items:
-                raise ValueError(f"Pornhub 搜索失败: {e}") from e
-    if _pornhub_degraded(html):
-        raise ValueError(
-            "PornHub 对当前网络出口返回了降级推荐页（数据中心 IP 被源站降级，搜不到相关结果）。"
-            + _PROXY_HINT
-        )
+            fetch_err = e
+    if not items or _pornhub_degraded(html):
+        # 站内页降级（卡片与关键词无关）或抓取失败 → 改走搜索通道拿真链接，不吐不相关结果
+        serp = _serp_adult("pornhub", kw)
+        if serp:
+            items = serp
+        elif _pornhub_degraded(html):
+            raise ValueError(
+                "PornHub 对当前网络出口返回了降级推荐页（数据中心 IP 被源站降级），"
+                "备用搜索通道也没拿到结果。" + _PROXY_HINT
+            )
     items = items[:count]
     if not items:
-        raise ValueError("Pornhub 没有解析到结果")
+        if fetch_err is not None:
+            raise ValueError(f"Pornhub 搜索失败: {fetch_err}") from fetch_err
+        raise ValueError("Pornhub 没有解析到结果。" + _PROXY_HINT)
     _translate_items(items)
     return items
 
@@ -1335,11 +1408,13 @@ def _parse_xhamster_cards(text):
 def search_xhamster(keyword, count):
     keyword = to_en(keyword)
     params = {"q": keyword}
+    items = []
+    fetch_err = None
     try:
         r = _fetch_proxied("https://xhamster.com/search", params=params, adult=True)
+        items = _parse_xhamster_cards(r.text)
     except Exception as e:
-        raise ValueError(f"xHamster 搜索失败: {e}") from e
-    items = _parse_xhamster_cards(r.text)
+        fetch_err = e
     if not items:
         # 普通 Python 指纹会被换成空壳挑战页（200 但零结果），改用 curl_cffi 再试一次
         try:
@@ -1348,7 +1423,12 @@ def search_xhamster(keyword, count):
         except Exception:
             pass
     if not items:
-        raise ValueError("xHamster 没有解析到结果（源站在拦截当前网络出口，或关键词无结果）。" + _PROXY_HINT)
+        # 空壳挑战页（200 零结果）→ 改走搜索通道拿真链接
+        items = _serp_adult("xhamster", keyword)
+    if not items:
+        if fetch_err is not None:
+            raise ValueError(f"xHamster 搜索失败: {fetch_err}") from fetch_err
+        raise ValueError("xHamster 站内返回空壳页，备用搜索通道也没拿到结果。" + _PROXY_HINT)
     items = items[:count]
     _translate_items(items)
     return items
