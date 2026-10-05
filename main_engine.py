@@ -113,12 +113,34 @@ def _serp_stock(query, hosts, pattern=None, per_page=20):
     """图站站内页被反爬拦截时，改用 Bing 图片搜索其 CDN 前缀兜底拿原图直链"""
     if isinstance(hosts, str):
         hosts = (hosts,)
+    variants = [query]
+    parts = [p for p in query.split(" ") if p]
+    if len(parts) > 1:
+        variants.append(" ".join(parts[1:] + parts[:1]))
+    for q in dict.fromkeys(variants):
+        items = _serp_stock_once(q, hosts, pattern, per_page)
+        if items:
+            return items
+    return []
+
+
+def _serp_stock_once(query, hosts, pattern=None, per_page=20):
     items, seen = [], set()
+    session = None
+    extra = {"mkt": "en-US", "setlang": "en", "cc": "US"}
     for page in range(2):
-        try:
-            hits = search_bing_page(query, page, per_page=35)
-        except Exception:
-            break
+        hits = []
+        for attempt in range(3):
+            try:
+                if session is None:
+                    session = _bing_session()
+                hits = search_bing_page(query, page, per_page=35, session=session, extra=extra)
+            except Exception:
+                hits = []
+            if hits:
+                break
+            session = None
+            time.sleep(2 + attempt * 2)
         if not hits:
             break
         for it in hits:
@@ -140,13 +162,18 @@ def _serp_stock(query, hosts, pattern=None, per_page=20):
             )
             if len(items) >= per_page:
                 return items
+        if len(items) >= 5:
+            break
     return items
 
 
-def search_bing_page(keyword, page, per_page=35, session=None):
+def search_bing_page(keyword, page, per_page=35, session=None, extra=None):
+    params = {"q": keyword, "first": page * per_page, "count": per_page}
+    if extra:
+        params.update(extra)
     r = http_get(
         "https://www.bing.com/images/search",
-        params={"q": keyword, "first": page * per_page, "count": per_page},
+        params=params,
         session=session,
     )
     soup = BeautifulSoup(r.text, "html.parser")
@@ -640,7 +667,7 @@ def search_pxhere_page(keyword, page, per_page=20):
         r = http_get(
             "https://pxhere.com/zh/search",
             params={"q": keyword, "page": page},
-            retries=1,
+            retries=3,
         )
         urls = re.findall(r'src="(https://c\.pxhere\.com/photos/[^"]+)"', r.text)
     except Exception as e:
