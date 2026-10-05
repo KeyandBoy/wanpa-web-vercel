@@ -30,13 +30,13 @@ const tok = () => {
 }
 
 export const api = {
-  search: (params) =>
-    fetch(`/api/search?${qs({ ...params, ...tok() })}`).then(async (r) => {
+  search: (params, signal) =>
+    fetch(`/api/search?${qs({ ...params, ...tok() })}`, { signal }).then(async (r) => {
       if (!r.ok) await throwApiError(r, '搜索失败')
       return r.json()
     }),
-  pageImages: (url) =>
-    fetch(`/api/page-images?url=${encodeURIComponent(url)}`).then(async (r) => {
+  pageImages: (url, signal) =>
+    fetch(`/api/page-images?url=${encodeURIComponent(url)}`, { signal }).then(async (r) => {
       if (!r.ok) await throwApiError(r, '网页解析失败')
       return r.json()
     }),

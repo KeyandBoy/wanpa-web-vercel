@@ -589,9 +589,10 @@ async function downloadZipNow() {
 async function cleanupBlob() {
   if (sinkType.value !== 'blob') return
   try {
-    const r = await sink.value.cleanup()
-    pushImageLog(`已清理云端临时文件 ${r.deleted} 个`)
-    ElMessage.success(`已清理云端临时文件 ${r.deleted} 个`)
+    const r = (await sink.value.cleanup()) || {}
+    const n = r.deleted ?? 0
+    pushImageLog(`已清理云端临时文件 ${n} 个`)
+    ElMessage.success(`已清理云端临时文件 ${n} 个`)
   } catch (e) {
     ElMessage.error(`清理失败: ${e.message}`)
   }

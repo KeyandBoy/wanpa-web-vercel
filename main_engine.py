@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from io import BytesIO
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -804,28 +804,43 @@ def search_xiurenai_page(keyword, page, per_page=20):
     global _xiurenai_cache
     if keyword not in _xiurenai_cache:
         s = _direct_session()
+        # 站内搜索已改成 POST 表单 /e/search/index.php；旧的首页 ?s=关键词 会直接回首页（解析到 0 张）
         try:
-            r = s.get("https://www.xiurenai.com/", params={"s": keyword}, timeout=25)
+            r = s.post(
+                "https://www.xiurenai.com/e/search/index.php",
+                data={
+                    "keyboard": keyword,
+                    "tbname": "news",
+                    "tempid": "1",
+                    "show": "title,smalltext",
+                    "andor": "or",
+                },
+                timeout=25,
+            )
         except Exception as e:
             raise ValueError(f"秀人网访问失败: {e}") from e
         detail_links = []
-        for m in re.finditer(r'<a[^>]+href="(https?://www\.xiurenai\.com/[^"]*\d+\.html)"[^>]*>', r.text):
-            href = m.group(1)
+        # 文章链接现在是相对路径（/jigou/xiuren/1674201.html），绝对/相对两种都要吃
+        for m in re.finditer(
+            r'href=["\']((?:https?://www\.xiurenai\.com)?/[^"\'\s]*\d+\.html)["\']', r.text
+        ):
+            href = urljoin("https://www.xiurenai.com/", m.group(1))
             if href not in detail_links:
                 detail_links.append(href)
-        if not detail_links:
-            for m in re.finditer(r'href="(https?://www\.xiurenai\.com/[^"]+\.html)"', r.text):
-                href = m.group(1)
-                if href not in detail_links:
-                    detail_links.append(href)
         all_imgs = []
         for dl in detail_links[:10]:
             try:
                 dr = s.get(dl, timeout=25)
             except Exception:
                 continue
-            for m in re.finditer(r'<img[^>]+(?:src|data-src|data-original)="(https?://[^"]+\.(?:jpg|jpeg|png|webp))"', dr.text, re.I):
-                u = m.group(1)
+            for m in re.finditer(
+                r'<img[^>]+(?:src|data-src|data-original)=["\']([^"\']+\.(?:jpg|jpeg|png|webp))["\']',
+                dr.text,
+                re.I,
+            ):
+                u = urljoin(dl, m.group(1))
+                if any(k in u.lower() for k in ("/skin/", "/static/", "/style/", "logo")):
+                    continue
                 if (dl, u) not in all_imgs:
                     all_imgs.append((dl, u))
             if not all_imgs:

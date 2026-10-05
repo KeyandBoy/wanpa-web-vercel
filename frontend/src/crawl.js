@@ -38,8 +38,24 @@ export function formatReport(keyword, type, ok, fail) {
 export const canPickFolder = () =>
   typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms))
+function sleep(ms, signal) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    if (!signal) return
+    if (signal.aborted) {
+      clearTimeout(timer)
+      resolve()
+      return
+    }
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      { once: true }
+    )
+  })
 }
 
 async function md5Hex(blob) {
@@ -88,7 +104,16 @@ export function passLayers(item, rules) {
 
 async function fetchImage(url, signal) {
   const res = await fetch(api.proxyUrl(url), { signal })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      if (j && j.error) detail = `: ${String(j.error).slice(0, 90)}`
+    } catch {
+      /* 非 JSON 响应，只报状态码 */
+    }
+    throw new Error(`HTTP ${res.status}${detail}`)
+  }
   return res.blob()
 }
 
@@ -98,7 +123,8 @@ async function collectItems(keyword, source, target, filters, signal, onLog) {
   let page = 1
   let hasMore = true
   while (items.length < target * 3 && hasMore && page <= 10 && !signal?.aborted) {
-    const r = await api.search({ keyword, source, page })
+    const r = await api.search({ keyword, source, page }, signal)
+    if (signal?.aborted) break
     const list = (r.items || []).filter((i) => {
       if (!passFilter(i, filters)) return false
       if (seenUrls.has(i.url)) return false
@@ -108,9 +134,14 @@ async function collectItems(keyword, source, target, filters, signal, onLog) {
     items.push(...list)
     hasMore = r.has_more !== false
     page += 1
-    await sleep(300)
+    await sleep(300, signal)
   }
-  onLog?.(`${source}: 解析到 ${items.length} 张候选(已翻 ${page - 1} 页)`)
+  if (signal?.aborted) return items
+  onLog?.(
+    items.length
+      ? `${source}: 解析到 ${items.length} 张候选(已翻 ${page - 1} 页)`
+      : `${source}: 解析到 0 张候选(已翻 ${page - 1} 页)——源站无结果、改版或被拦截`
+  )
   return items
 }
 
@@ -184,7 +215,7 @@ export async function runCrawl({
         }
         for (const u of urls) {
           if (signal?.aborted) break
-          const r = await api.pageImages(u)
+          const r = await api.pageImages(u, signal)
           items.push(...(r.items || []).map((i) => ({ ...i, sourceUrl: u })))
           onLog?.(`自定义网址: ${u} → 提取 ${(r.items || []).length} 张`)
         }
@@ -227,7 +258,7 @@ export async function runCrawl({
         onLog?.(`${source}: 按图集均分 ${beforeBalance} → ${items.length} 张`)
       }
     } catch (e) {
-      if (e.name === 'AbortError') continue
+      if (e.name === 'AbortError') break
       const etype = e.errorType || ''
       const typeLabel = etype === 'timeout' ? '(超时)' : etype === 'connection_error' ? '(连接失败)' : etype === 'source_blocked' ? '(源站拦截)' : etype === 'ssl_error' ? '(SSL错误)' : ''
       onLog?.(`${source}: 搜索失败${typeLabel} ${e.message}`)
@@ -243,6 +274,7 @@ export async function runCrawl({
       if (srcDownloaded >= count) return
       try {
         const blob = await fetchImage(item.url, signal)
+        if (signal?.aborted) return
         const digest = await md5Hex(blob)
         if (seenHashes.has(digest)) {
           dup += 1
@@ -487,7 +519,7 @@ export function createBlobSink(taskId) {
     getReportFiles: () => reports,
     getUrls: () => urls,
     async cleanup() {
-      await api.cleanupBlob(`crawl/${taskId}`)
+      return api.cleanupBlob(`crawl/${taskId}`)
     },
   }
 }

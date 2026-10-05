@@ -233,20 +233,51 @@ def api_comic_pages(url, limit=None):
     return comic_pages(url, limit)
 
 
+def _img_error(url, e):
+    """把下载异常翻成一行人话，前端日志能直接看到失败原因（而不是只有一个 HTTP 400）。"""
+    host = url.split("/")[2].split(":")[0]
+    msg = str(e)
+    low = msg.lower()
+    if "timed out" in low or "timeout" in low:
+        return f"下载超时: {host}"
+    if "nameresolution" in low or "name or service not known" in low or "getaddrinfo" in low:
+        return f"域名解析失败(源站域名已失效?): {host}"
+    if "max retries" in low or "connection" in low:
+        return f"连接失败: {host}"
+    m = re.match(r"(\d{3})", msg)
+    if m:
+        return f"上游返回 HTTP {m.group(1)}: {host}"
+    return f"{host}: {msg[:100]}"
+
+
+# 图片专用请求头：Chrome/126 这种旧 UA 会被部分 CDN 直接 403（实测 p4.itc.cn 对 126 给 403、131 给 200）
+_IMG_HEADERS = {
+    **HEADERS,
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+}
+
+
 def api_proxy(url):
     if not url.startswith(("http://", "https://")):
         raise ValueError("无效的图片地址")
     host = url.split("/")[2].split(":")[0].lower()
     if BLOCKED_HOSTS.match(host):
         raise ValueError("该地址不允许访问")
-    headers = HEADERS
-    if host == "xr.afxfl.com":
-        from main_engine import _direct_session
+    headers = _IMG_HEADERS
+    try:
+        if host == "xr.afxfl.com":
+            from main_engine import _direct_session
 
-        headers = {**HEADERS, "Referer": "https://www.xiurenai.com/"}
-        r = http_get(url, timeout=25, retries=1, headers=headers, session=_direct_session())
-    else:
-        r = http_get(url, timeout=25, retries=1, headers=headers)
+            headers = {**_IMG_HEADERS, "Referer": "https://www.xiurenai.com/"}
+            r = http_get(url, timeout=20, retries=2, headers=headers, session=_direct_session())
+        else:
+            r = http_get(url, timeout=20, retries=2, headers=headers)
+    except Exception as e:
+        raise ValueError(_img_error(url, e)) from e
     ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
     if not ctype.startswith("image/"):
         if ctype == "application/octet-stream" and re.search(
