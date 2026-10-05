@@ -1832,7 +1832,162 @@ def _parse_serp_mgtv_bing(text):
     return _parse_serp_mgtv_common(text, pat)
 
 
+_MGTV_SO_SECRET = "xHAa3YZflWLogZUOzl"
+_MGTV_SAFE = ";, /?:@&=+$-_.!~*'()#".replace(" ", "")
+
+
+def _mgtv_sign(params):
+    """so.mgtv.com /pc/search/v2 签名：md5(secret + 按key排序的encodeURI查询串 + secret)。"""
+    import hashlib
+
+    from urllib.parse import quote as _q
+
+    pairs = sorted(
+        (k, v) for k, v in params.items() if not (isinstance(v, str) and not v.strip())
+    )
+    qs = "&".join("%s=%s" % (_q(str(k), safe=_MGTV_SAFE), _q(str(v), safe=_MGTV_SAFE)) for k, v in pairs)
+    return hashlib.md5((_MGTV_SO_SECRET + qs + _MGTV_SO_SECRET).encode("utf-8")).hexdigest()
+
+
+def _mgtv_norm(u):
+    if not isinstance(u, str):
+        return ""
+    u = u.split("#")[0].split("?")[0].strip()
+    if u.startswith("//"):
+        u = "https:" + u
+    return u if u.startswith("http") else ""
+
+
+def _mgtv_items(contents):
+    out, seen = [], set()
+
+    def add(title, url, thumb=None, dur=""):
+        title = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", title or "")).strip()
+        url = _mgtv_norm(url)
+        if not title or not url or "mgtv.com" not in url or url in seen:
+            return
+        seen.add(url)
+        out.append(
+            {
+                "title": title[:200],
+                "url": url,
+                "duration": None,
+                "duration_text": (dur or "").strip(),
+                "thumb": thumb or None,
+                "source": "mgtv",
+            }
+        )
+
+    for it in contents or []:
+        if not isinstance(it, dict):
+            continue
+        da = it.get("data") or {}
+        title0 = da.get("hitTitle") or da.get("title") or ""
+        thumb = da.get("pic")
+        # 单视频：data.url = //www.mgtv.com/b/{cid}/{vid}.html
+        if da.get("url"):
+            add(title0, da.get("url"), thumb, da.get("updateInfo") or "")
+            continue
+        # 剧集/综艺（program）：yearList → sourceList(mgtv) → videoList 首集
+        got = False
+        for yl in da.get("yearList") or []:
+            yt = yl.get("hitTitle") or yl.get("title") or title0
+            ypic = yl.get("pic") or thumb
+            for sl in yl.get("sourceList") or []:
+                vl = sl.get("videoList") or []
+                if vl:
+                    v0 = vl[0] or {}
+                    add(yt, v0.get("url"), v0.get("pic") or ypic, v0.get("updateInfo") or "")
+                    got = True
+                elif "mgtv.com" in (sl.get("url") or ""):
+                    add(yt, sl.get("url"), ypic)
+                    got = True
+            if got:
+                break
+        if got:
+            continue
+        # 电影/动漫（movie）：sourceList 里的 mgtv 源，兜底 uuid → /h/{uuid}.html
+        mgu = ""
+        for sl in da.get("sourceList") or []:
+            if "mgtv.com" in (sl.get("url") or ""):
+                mgu = sl.get("url")
+                break
+        if mgu:
+            add(title0, mgu, thumb)
+        elif da.get("uuid"):
+            add(title0, "https://www.mgtv.com/h/%s.html" % da.get("uuid"), thumb)
+    return out
+
+
+def _mgtv_api_search(keyword, page=1, count=10):
+    """逆向 so.mgtv.com 站内搜索 /pc/search/v2（md5 签名），返回真实按关键词过滤的结果。"""
+    from datetime import datetime, timezone
+    from urllib.parse import quote as _q
+    from uuid import uuid4
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    p = {
+        "src": "mgtv",
+        "did": uuid4().hex,
+        "timestamp": now,
+        "signVersion": "1",
+        "signNonce": uuid4().hex,
+        "q": keyword,
+        "pn": str(max(1, int(page or 1))),
+        "pc": str(max(10, int(count or 10))),
+        "corr": "1",
+    }
+    p["signature"] = _mgtv_sign(p)
+    qs = "&".join(
+        "%s=%s" % (_q(str(k), safe=_MGTV_SAFE), _q(str(v), safe=_MGTV_SAFE))
+        for k, v in p.items()
+    )
+    url = "https://mobileso.bz.mgtv.com/pc/search/v2?" + qs
+    headers = {
+        "User-Agent": _FETCH_HEADERS.get(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        ),
+        "Referer": "https://so.mgtv.com/",
+    }
+    r = None
+    try:
+        from curl_cffi import requests as cr
+
+        r = cr.get(url, headers=headers, timeout=15, impersonate="chrome131")
+    except Exception:
+        r = None
+    if r is None:
+        r = _fetch_any(url, timeout=20)
+    data = ((r.json() if r is not None else {}) or {}).get("data") or {}
+    return _mgtv_items(data.get("contents") or [])
+
+
 def search_mgtv(keyword, count):
+    from curl_cffi import requests as cr
+
+    kw = (keyword or "").strip()
+    items = []
+    # 主通道：逆向的 /pc/search/v2（按关键词真实过滤）
+    try:
+        items = _mgtv_api_search(kw, 1, max(int(count or 10), 10))
+    except Exception:
+        items = []
+    # 兜底 1：旧列表接口（已改版返回热榜，须做相关性过滤）
+    if not items:
+        items = _search_mgtv_v3(kw)
+    # 兜底 2：Brave/360/Bing 搜 site:mgtv.com 拿真实播放页
+    relevant = items
+    if not relevant and kw:
+        relevant = _serp_mgtv(kw)
+    if not relevant:
+        raise ValueError("芒果TV没有搜索到结果（站内接口与备用搜索通道均为空）")
+    relevant = relevant[:count]
+    _translate_items(relevant)
+    return relevant
+
+
+def _search_mgtv_v3(kw):
     from curl_cffi import requests as cr
 
     params = {
@@ -1849,7 +2004,7 @@ def search_mgtv(keyword, count):
         "pn": "1",
         "sort": "c2",
         "year": "all",
-        "word": keyword,
+        "word": kw,
         "pno": 1,
         "psize": 20,
         "cname": "all",
@@ -1885,23 +2040,8 @@ def search_mgtv(keyword, count):
             )
     except Exception:
         items = []
-    # 站内接口已改版：任何关键词都返回同一份热榜（与关键词无关）→ 过滤后仍空则走搜索通道兜底
-    kw = (keyword or "").strip()
-    relevant = [i for i in items if kw and kw in i["title"]] if kw else []
-    if not relevant:
-        serp = _serp_mgtv(kw)
-        if serp:
-            relevant = serp
-    if not relevant:
-        if items:
-            raise ValueError(
-                "芒果TV 站内搜索接口已改版（返回热榜与关键词无关），"
-                "备用搜索通道也没拿到结果。"
-            )
-        raise ValueError("芒果TV没有搜索到结果")
-    relevant = relevant[:count]
-    _translate_items(relevant)
-    return relevant
+    # 旧接口已改版：任何关键词都返回同一份热榜（与关键词无关）→ 只保留标题含关键词的
+    return [i for i in items if kw and kw in i["title"]] if kw else []
 
 
 def _resolve_xhamster(url):
