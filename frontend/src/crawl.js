@@ -273,7 +273,7 @@ export async function runCrawl({
     let srcLogged = 0
     let srcLastErr = ''
     let seq = 0
-    await pool(items, workers, async (item) => {
+    await pool(items, source === 'wikimedia' ? Math.min(workers, 2) : workers, async (item) => {
       if (signal?.aborted) return
       if (srcDownloaded >= count) return
       if (!srcDownloaded && srcFailed >= 5) return
