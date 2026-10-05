@@ -76,6 +76,7 @@ def api_search(keyword, source, page, count=20):
         "pornhub", "pornhub-albums", "pornpics", "asiantolick",
         "foamgirl", "openverse", "wikimedia", "wallhaven", "wallhere", "yande",
         "pxhere", "pixabay", "unsplash", "giphy", "anime-pictures", "pixiv",
+        "pexels",
     }
     if source in EN_SOURCES:
         try:

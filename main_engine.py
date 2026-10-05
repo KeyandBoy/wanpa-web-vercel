@@ -90,11 +90,57 @@ def http_get_browser(url, params=None, timeout=20, retries=2, session=None, head
             )
             if r.status_code == 200:
                 return r
-            last = ValueError(f"HTTP {r.status_code} 反爬拦截")
+            last = ValueError(f"HTTP {r.status_code} 反爬拦截{'（出口已走代理仍被拦）' if proxies else '（未配置 PROXY）'}")
         except Exception as e:
             last = e
         time.sleep(1)
     raise last
+
+
+def _en_keyword(keyword):
+    """站内页被拦时的 Bing 兜底要英文查询才有结果，先尝试翻译"""
+    try:
+        from trans_svc import has_chinese, to_en
+
+        if has_chinese(keyword):
+            return to_en(keyword) or keyword
+    except Exception:
+        pass
+    return keyword
+
+
+def _serp_stock(query, hosts, pattern=None, per_page=20):
+    """图站站内页被反爬拦截时，改用 Bing 图片搜索其 CDN 前缀兜底拿原图直链"""
+    if isinstance(hosts, str):
+        hosts = (hosts,)
+    items, seen = [], set()
+    for page in range(2):
+        try:
+            hits = search_bing_page(query, page, per_page=35)
+        except Exception:
+            break
+        if not hits:
+            break
+        for it in hits:
+            u = (it.get("url") or "").split("?")[0]
+            if not any(h in u for h in hosts):
+                continue
+            if pattern and not re.search(pattern, u):
+                continue
+            if u in seen:
+                continue
+            seen.add(u)
+            items.append(
+                {
+                    "url": u,
+                    "title": it.get("title") or "",
+                    "width": it.get("width"),
+                    "height": it.get("height"),
+                }
+            )
+            if len(items) >= per_page:
+                return items
+    return items
 
 
 def search_bing_page(keyword, page, per_page=35, session=None):
@@ -660,6 +706,8 @@ def search_pexels_page(keyword, page, per_page=20, api_key=""):
             return items
         except Exception as e:
             raise ValueError(f"Pexels API 访问失败: {e}") from e
+    last = None
+    urls = []
     try:
         r = http_get_browser(
             "https://www.pexels.com/search/" + quote(keyword) + "/",
@@ -669,10 +717,22 @@ def search_pexels_page(keyword, page, per_page=20, api_key=""):
         urls = re.findall(
             r"https://images\.pexels\.com/photos/\d+/pexels-photo-\d+\.jpeg", r.text
         )
+        if not urls:
+            raise ValueError("站内页未解析到图片")
     except Exception as e:
-        raise ValueError(f"Pexels 反爬拦截: {e}（可配置 PEXELS_KEY 走官方 API）") from e
+        last = e
     if not urls:
-        raise ValueError("Pexels 未解析到结果，可能被防护墙拦截（可配置 PEXELS_KEY 走官方 API）")
+        items = _serp_stock(
+            f"images.pexels.com {_en_keyword(keyword)}",
+            "images.pexels.com",
+            r"/photos/\d+/pexels-photo-\d+\.jpe?g$",
+        )
+        if items:
+            return items
+        raise ValueError(
+            f"Pexels 站内页被拦截且 Bing 兜底无结果: {last}（可配置 PEXELS_KEY 走官方 API）"
+        ) from last
+    items, seen = [], set()
     items, seen = [], set()
     for u in urls:
         if u in seen:
@@ -1110,6 +1170,8 @@ def search_unsplash_page(keyword, page, api_key, per_page=20):
                     }
                 )
         return items
+    last = None
+    data = None
     try:
         r = http_get_browser(
             "https://unsplash.com/napi/search/photos",
@@ -1117,28 +1179,43 @@ def search_unsplash_page(keyword, page, api_key, per_page=20):
             retries=2,
         )
         if "within.website" in str(getattr(r, "url", "")):
-            raise ValueError("Unsplash 无 key 被防护墙拦截（可配置 UNSPLASH_KEY 走官方 API）")
+            raise ValueError("被 Anubis 防护墙拦截")
         data = r.json()
-        items = []
-        for hit in (data.get("results") or []):
-            urls = hit.get("urls") or {}
-            url = urls.get("full") or urls.get("regular") or ""
-            if url:
-                items.append(
-                    {
-                        "url": url,
-                        "title": hit.get("alt_description") or keyword,
-                        "width": hit.get("width"),
-                        "height": hit.get("height"),
-                    }
-                )
-        if not items:
-            raise ValueError("Unsplash 未解析到结果，可能被防护墙拦截（可配置 UNSPLASH_KEY 走官方 API）")
-        return items
-    except ValueError:
-        raise
     except Exception as e:
-        raise ValueError(f"Unsplash 站内接口访问失败: {e}（可配置 UNSPLASH_KEY 走官方 API）") from e
+        last = e
+    if data is None:
+        items = _serp_stock(
+            f"unsplash {_en_keyword(keyword)}",
+            ("images.unsplash.com", "plus.unsplash.com"),
+            r"/photo-[0-9a-f-]+$",
+        )
+        if items:
+            return items
+        raise ValueError(
+            f"Unsplash 站内接口被拦截且 Bing 兜底无结果: {last}（可配置 UNSPLASH_KEY 走官方 API）"
+        ) from last
+    items = []
+    for hit in (data.get("results") or []):
+        urls = hit.get("urls") or {}
+        url = urls.get("full") or urls.get("regular") or ""
+        if url:
+            items.append(
+                {
+                    "url": url,
+                    "title": hit.get("alt_description") or keyword,
+                    "width": hit.get("width"),
+                    "height": hit.get("height"),
+                }
+            )
+    if not items:
+        items = _serp_stock(
+            f"unsplash {_en_keyword(keyword)}",
+            ("images.unsplash.com", "plus.unsplash.com"),
+            r"/photo-[0-9a-f-]+$",
+        )
+    if not items:
+        raise ValueError("Unsplash 无结果，可能被防护墙拦截（可配置 UNSPLASH_KEY 走官方 API）")
+    return items
 
 
 def search_twitter_page(keyword, page, per_page=20):
