@@ -57,7 +57,43 @@ def http_get(url, params=None, timeout=20, retries=3, session=None, verify=True,
             return r
         except requests.RequestException as e:
             last = e
-            time.sleep(1.5 * (i + 1))
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            time.sleep(5 * (i + 1) if code == 429 else 1.5 * (i + 1))
+    raise last
+
+
+def http_get_browser(url, params=None, timeout=20, retries=2, session=None, headers=None):
+    """反爬较严的图站 (pexels/pixabay/unsplash 等): 普通请求被拦时换 curl_cffi 仿浏览器指纹重试"""
+    last = None
+    for i in range(max(retries, 1)):
+        try:
+            return http_get(url, params=params, timeout=timeout, retries=1, session=session, headers=headers)
+        except Exception as e:
+            last = e
+        try:
+            from curl_cffi import requests as creq
+
+            proxies = None
+            try:
+                from env_utils import proxies as _proxies
+
+                proxies = _proxies()
+            except Exception:
+                proxies = None
+            r = creq.get(
+                url,
+                params=params,
+                headers={**HEADERS, **(headers or {})},
+                timeout=timeout,
+                proxies=proxies,
+                impersonate="chrome131",
+            )
+            if r.status_code == 200:
+                return r
+            last = ValueError(f"HTTP {r.status_code} 反爬拦截")
+        except Exception as e:
+            last = e
+        time.sleep(1)
     raise last
 
 
@@ -231,7 +267,10 @@ def pixabay_page(keyword, page, api_key, per_page=200):
     session = _get_pixabay_session()
     base_url = f"https://pixabay.com/images/search/{quote(keyword)}/"
     url = base_url if page == 1 else f"{base_url}?pagi={page}"
-    r = http_get(url, timeout=20, session=session)
+    try:
+        r = http_get_browser(url, timeout=20, retries=2, session=session)
+    except Exception as e:
+        raise ValueError(f"Pixabay 反爬拦截: {e}（可配置 PIXABAY_KEY 走官方 API）") from e
     by_id = {}
     raw_urls = set(re.findall(r"https://cdn\.pixabay\.com/photo/[^\s\"']+", r.text))
     for u in raw_urls:
@@ -496,6 +535,7 @@ def search_wikimedia_page(keyword, page, per_page=20):
                 "gsroffset": (page - 1) * per_page,
                 "prop": "imageinfo",
                 "iiprop": "url|size|mime",
+                "iiurlwidth": 1600,
                 "format": "json",
             },
             retries=1,
@@ -506,7 +546,9 @@ def search_wikimedia_page(keyword, page, per_page=20):
     items = []
     for p in (data.get("query", {}).get("pages") or {}).values():
         ii = (p.get("imageinfo") or [{}])[0]
-        url = ii.get("url") or ""
+        url = ii.get("thumburl") or ii.get("url") or ""
+        if "wikimedia.org" in url:
+            url = url.split("?")[0]
         mime = ii.get("mime") or ""
         if url and mime.startswith("image/") and mime not in ("image/svg+xml", "image/tiff"):
             items.append(
@@ -619,16 +661,18 @@ def search_pexels_page(keyword, page, per_page=20, api_key=""):
         except Exception as e:
             raise ValueError(f"Pexels API 访问失败: {e}") from e
     try:
-        r = http_get(
+        r = http_get_browser(
             "https://www.pexels.com/search/" + quote(keyword) + "/",
             params={"page": page},
-            retries=1,
+            retries=2,
         )
         urls = re.findall(
             r"https://images\.pexels\.com/photos/\d+/pexels-photo-\d+\.jpeg", r.text
         )
     except Exception as e:
-        raise ValueError(f"Pexels 访问失败: {e}") from e
+        raise ValueError(f"Pexels 反爬拦截: {e}（可配置 PEXELS_KEY 走官方 API）") from e
+    if not urls:
+        raise ValueError("Pexels 未解析到结果，可能被防护墙拦截（可配置 PEXELS_KEY 走官方 API）")
     items, seen = [], set()
     for u in urls:
         if u in seen:
@@ -1067,13 +1111,13 @@ def search_unsplash_page(keyword, page, api_key, per_page=20):
                 )
         return items
     try:
-        r = http_get(
+        r = http_get_browser(
             "https://unsplash.com/napi/search/photos",
             params={"query": keyword, "page": page, "per_page": per_page, "xp": ""},
-            retries=1,
+            retries=2,
         )
-        if r.status_code == 401 or "within.website" in r.url:
-            raise ValueError("Unsplash 无 key 被防护墙拦截")
+        if "within.website" in str(getattr(r, "url", "")):
+            raise ValueError("Unsplash 无 key 被防护墙拦截（可配置 UNSPLASH_KEY 走官方 API）")
         data = r.json()
         items = []
         for hit in (data.get("results") or []):
@@ -1088,11 +1132,13 @@ def search_unsplash_page(keyword, page, api_key, per_page=20):
                         "height": hit.get("height"),
                     }
                 )
+        if not items:
+            raise ValueError("Unsplash 未解析到结果，可能被防护墙拦截（可配置 UNSPLASH_KEY 走官方 API）")
         return items
     except ValueError:
         raise
     except Exception as e:
-        raise ValueError(f"Unsplash 站内接口访问失败: {e}") from e
+        raise ValueError(f"Unsplash 站内接口访问失败: {e}（可配置 UNSPLASH_KEY 走官方 API）") from e
 
 
 def search_twitter_page(keyword, page, per_page=20):

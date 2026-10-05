@@ -268,16 +268,23 @@ export async function runCrawl({
     }
     let srcDownloaded = 0
     let srcFailed = 0
+    let srcDup = 0
+    let srcTried = 0
+    let srcLogged = 0
+    let srcLastErr = ''
     let seq = 0
     await pool(items, workers, async (item) => {
       if (signal?.aborted) return
       if (srcDownloaded >= count) return
+      if (!srcDownloaded && srcFailed >= 5) return
+      srcTried += 1
       try {
         const blob = await fetchImage(item.url, signal)
         if (signal?.aborted) return
         const digest = await md5Hex(blob)
         if (seenHashes.has(digest)) {
           dup += 1
+          srcDup += 1
           emit()
           return
         }
@@ -307,14 +314,21 @@ export async function runCrawl({
         if (e.name === 'AbortError') return
         failed += 1
         srcFailed += 1
+        srcLastErr = e.message
         failures.push({ time: nowTime(), source, url: item.url, error: e.message })
-        if (failed <= 8) {
+        if (srcLogged < 5) {
+          srcLogged += 1
           onLog?.(`${source}: 下载失败: ${e.message} | ${item.url.slice(0, 100)}`)
         }
         emit()
       }
     })
     if (signal?.aborted) break
+    if (!srcDownloaded && srcFailed >= 5) {
+      onLog?.(
+        `${source}: 连续 ${srcFailed} 张全部失败(${srcLastErr.slice(0, 60)})，图床疑似拒绝本站出口，跳过剩余 ${Math.max(items.length - srcTried, 0)} 张`
+      )
+    }
     const srcMeta = meta.filter((m) => m.source === source)
     if (srcMeta.length) {
       try {
@@ -326,7 +340,7 @@ export async function runCrawl({
         onLog?.(`${source}: 写入 metadata 失败(不影响主任务): ${e.message}`)
       }
     }
-    onLog?.(`${source}: 下载 ${srcDownloaded} | 去重跳过 ${dup} | 失败 ${srcFailed}`)
+    onLog?.(`${source}: 下载 ${srcDownloaded} | 去重跳过 ${srcDup} | 失败 ${srcFailed}`)
   }
 
   const all = meta.map(({ remote_url, ...rest }) => rest)
