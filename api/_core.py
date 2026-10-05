@@ -262,13 +262,24 @@ _IMG_HEADERS = {
 }
 
 
+# 防盗链图床要带对应站点 Referer 才给图（i.pximg.net/c.wallhere.com 实测无 Referer 必 403）
+_IMG_HOST_REFERER = {
+    "i.pximg.net": "https://www.pixiv.net/",
+    "c.wallhere.com": "https://wallhere.com/",
+    "wallhere.com": "https://wallhere.com/",
+    "w.wallhaven.cc": "https://wallhaven.cc/",
+    "th.wallhaven.cc": "https://wallhaven.cc/",
+}
+
+
 def api_proxy(url):
     if not url.startswith(("http://", "https://")):
         raise ValueError("无效的图片地址")
     host = url.split("/")[2].split(":")[0].lower()
     if BLOCKED_HOSTS.match(host):
         raise ValueError("该地址不允许访问")
-    headers = _IMG_HEADERS
+    referer = _IMG_HOST_REFERER.get(host)
+    headers = {**_IMG_HEADERS, "Referer": referer} if referer else _IMG_HEADERS
     try:
         if host == "xr.afxfl.com":
             from main_engine import _direct_session

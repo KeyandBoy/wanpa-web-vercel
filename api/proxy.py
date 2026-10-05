@@ -26,7 +26,10 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(content)
                 return
             except Exception as e:
-                body, headers, status = err_json(400, str(e))
+                import re as _re
+
+                m = _re.search(r"HTTP (\d{3})", str(e))
+                body, headers, status = err_json(int(m.group(1)) if m else 400, str(e))
         self.send_response(status)
         for k, v in headers.items():
             self.send_header(k, v)

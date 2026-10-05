@@ -102,19 +102,51 @@ export function passLayers(item, rules) {
   return true
 }
 
+function friendlyFetchError(e) {
+  const msg = e?.message || String(e)
+  if (/did not match the expected pattern/i.test(msg)) return '请求被系统中断(iOS 网络错误)'
+  if (msg === 'Load failed') return '网络加载失败(连接被重置或超时)'
+  return msg
+}
+
 async function fetchImage(url, signal) {
-  const res = await fetch(api.proxyUrl(url), { signal })
-  if (!res.ok) {
-    let detail = ''
+  let lastErr
+  for (let i = 0; i < 2; i++) {
+    if (signal?.aborted) throw new DOMException('已停止', 'AbortError')
     try {
-      const j = await res.json()
-      if (j && j.error) detail = `: ${String(j.error).slice(0, 90)}`
-    } catch {
-      /* 非 JSON 响应，只报状态码 */
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 45000)
+      const relay = () => ctrl.abort()
+      signal?.addEventListener('abort', relay, { once: true })
+      let res
+      try {
+        res = await fetch(api.proxyUrl(url), { signal: ctrl.signal })
+      } finally {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', relay)
+      }
+      if (signal?.aborted) throw new DOMException('已停止', 'AbortError')
+      if (!res.ok) {
+        let detail = ''
+        try {
+          const j = await res.json()
+          if (j && j.error) detail = `: ${String(j.error).slice(0, 90)}`
+        } catch {
+          /* 非 JSON 响应，只报状态码 */
+        }
+        if (detail.includes('HTTP ')) throw new Error(detail.slice(2))
+        throw new Error(`HTTP ${res.status}${detail}`)
+      }
+      return await res.blob()
+    } catch (e) {
+      if (signal?.aborted) throw new DOMException('已停止', 'AbortError')
+      const timedOut = e?.name === 'AbortError'
+      lastErr = timedOut ? new Error('下载超时(45秒)') : new Error(friendlyFetchError(e))
+      if (i === 0) await sleep(500)
+      else throw lastErr
     }
-    throw new Error(`HTTP ${res.status}${detail}`)
   }
-  return res.blob()
+  throw lastErr
 }
 
 async function collectItems(keyword, source, target, filters, signal, onLog) {
@@ -513,9 +545,15 @@ export function createBlobSink(taskId) {
     async save({ path, seq, blob, source }) {
       const ext = extFromType(blob.type)
       const key = source ? `${source}_${seq}` : `${seq}`
-      const r = await api.uploadBlob(taskId, key, ext, blob)
-      urls.push(r.url)
-      return { previewUrl: r.url, remoteUrl: r.url }
+      const preview = URL.createObjectURL(blob)
+      try {
+        const r = await api.uploadBlob(taskId, key, ext, blob)
+        urls.push(r.url)
+        return { previewUrl: preview, remoteUrl: r.url }
+      } catch (e) {
+        URL.revokeObjectURL(preview)
+        throw e
+      }
     },
     async writeMetadata(path, meta) {
       if (meta.length) {
