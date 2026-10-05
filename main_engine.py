@@ -68,9 +68,49 @@ def _pick_proxies(url, session=None):
         return None
 
 
+def _relay_eligible(url):
+    """成人域名且配置了 ADULT_RELAY（本机中转取回）时可走兜底。"""
+    if not _is_adult_url(url):
+        return False
+    try:
+        from env_utils import env
+
+        return bool(env("ADULT_RELAY"))
+    except Exception:
+        return False
+
+
+def _relay_fetch(url, params=None, timeout=30, headers=None, retries=2):
+    """经 ADULT_RELAY 中转取回（Vercel 出口被源站封时的兜底路径）。"""
+    from env_utils import env
+
+    base = (env("ADULT_RELAY") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("ADULT_RELAY 未配置")
+    full = requests.Request("GET", url, params=params).prepare().url
+    last = None
+    for i in range(max(retries, 1)):
+        try:
+            r = requests.get(
+                base + "/fetch?u=" + quote(full, safe=""),
+                headers=headers or HEADERS,
+                timeout=max(timeout, 30),
+            )
+            furl = r.headers.get("X-Final-Url")
+            if furl:
+                r.url = furl
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            last = e
+            time.sleep(1.5 * (i + 1))
+    raise last
+
+
 def http_get(url, params=None, timeout=20, retries=3, session=None, verify=True, headers=None):
     last = None
     proxies = _pick_proxies(url, session)
+    relay_ok = _relay_eligible(url)
     for i in range(retries):
         try:
             client = session if session is not None else requests
@@ -87,7 +127,17 @@ def http_get(url, params=None, timeout=20, retries=3, session=None, verify=True,
         except requests.RequestException as e:
             last = e
             code = getattr(getattr(e, "response", None), "status_code", None)
-            time.sleep(5 * (i + 1) if code == 429 else 1.5 * (i + 1))
+            if code == 429:
+                time.sleep(5 * (i + 1))
+            elif relay_ok:
+                pass  # 成人源直连失败无意义，立即尝试下一次/中转兜底
+            else:
+                time.sleep(1.5 * (i + 1))
+    if relay_ok:
+        try:
+            return _relay_fetch(url, params=params, timeout=timeout, headers=headers)
+        except Exception as e:
+            last = e
     raise last
 
 
@@ -1168,17 +1218,9 @@ def search_asiantolick_page(keyword, page, per_page=20):
 
 def search_xxknit_page(keyword, page, per_page=20):
     """xx.knit.bid (爱妹国写真/Cosplay): SSR 搜索，返回图集封面图"""
-    from curl_cffi import requests as cr
-
-    try:
-        from env_utils import proxies as _proxies
-
-        proxies = _proxies()
-    except Exception:
-        proxies = None
     url = f"https://xx.knit.bid/zh-hant/search/?s={requests.utils.quote(keyword)}"
     try:
-        r = cr.get(url, impersonate="chrome131", timeout=20, proxies=proxies)
+        r = http_get(url, timeout=25, retries=2)
         if r.status_code != 200:
             raise ValueError(f"xx.knit.bid 返回 {r.status_code}")
     except Exception as e:
