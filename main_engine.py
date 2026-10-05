@@ -1226,6 +1226,11 @@ def search_xsnvshen_page(keyword, page, per_page=20):
                 r = s.get(list_url, timeout=20)
             except Exception as e:
                 raise ValueError(f"秀色女神访问失败: {e}") from e
+            # 站点整站挂了防沉迷拦截页（404 + <title>防沉迷提示</title>），此时按 0 结果报会让人误以为是关键词没命中
+            if "防沉迷" in r.text[:3000]:
+                raise ValueError("秀色女神整站返回防沉迷提示页(404)，该源暂不可用")
+            if r.status_code != 200:
+                raise ValueError(f"秀色女神列表页异常(HTTP {r.status_code})")
             for m in re.finditer(
                 r'<a[^>]+href="(/album/\d+)"[^>]*(?:class="itemimg"|title="([^"]*)")',
                 r.text,

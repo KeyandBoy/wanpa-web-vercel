@@ -278,17 +278,26 @@ def api_proxy(url):
             r = http_get(url, timeout=20, retries=2, headers=headers)
     except Exception as e:
         raise ValueError(_img_error(url, e)) from e
+    # cg51 这类 CDN 内容走 AES 加密且 Content-Type 只给 binary/octet-stream，先解密再判类型
+    from cg51_svc import maybe_decrypt, sniff_media_type
+
+    body = maybe_decrypt(r.content, url)
     ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
     if not ctype.startswith("image/"):
-        if ctype == "application/octet-stream" and re.search(
-            r"\.(jpe?g|png|gif|webp|bmp)(\?|$)", url, re.I
-        ):
-            ctype = "image/jpeg"
+        sniffed = sniff_media_type(body)
+        if sniffed:
+            ctype = sniffed
+        elif "octet-stream" in ctype or "binary" in ctype or not ctype:
+            m = re.search(r"\.(jpe?g|png|gif|webp|bmp)(?:\?|$)", url, re.I)
+            if not m:
+                raise ValueError("目标不是图片: " + (ctype or "空"))
+            ext = m.group(1).lower()
+            ctype = "image/jpeg" if ext.startswith("jpe") else "image/" + ext
         else:
             raise ValueError("目标不是图片: " + ctype)
-    if len(r.content) > MAX_PROXY_BYTES:
+    if len(body) > MAX_PROXY_BYTES:
         raise ValueError("图片超过大小限制")
-    return r.content, ctype
+    return body, ctype
 
 
 def api_upload(task_id, seq, ext, body):
