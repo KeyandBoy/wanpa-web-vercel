@@ -789,23 +789,24 @@ def search_giphy_page(keyword, page, per_page=20):
 
 
 def search_wallhere_page(keyword, page, per_page=20):
-    """Wallhere 壁纸库: HTML (需代理, 中文标签页可用)"""
+    """Wallhere 壁纸: HTML (免 key, 标签页可直连)"""
     try:
         r = http_get(
             "https://wallhere.com/zh/search",
             params={"q": keyword, "page": page},
             retries=1,
         )
-        urls = re.findall(r"https://c\.wallhere\.com/photos/[^\"']+\.jpg", r.text)
+        # 原图 /photos/... 实测被图床 403(IP 级)，同域 /images/...!s1/!s2 缩略图可用，取更大的 s2
+        urls = re.findall(r"https://c\.wallhere\.com/images/[^\"'\s]+\.jpg(?:!\w+)?", r.text)
     except Exception as e:
         raise ValueError(f"Wallhere 访问失败(可能需要代理): {e}") from e
     items, seen = [], set()
     for u in urls:
-        u = u.split("!")[0]
-        if u in seen or not u.endswith(".jpg"):
+        base = u.split("!")[0]
+        if base in seen:
             continue
-        seen.add(u)
-        items.append({"url": u, "title": keyword, "width": None, "height": None})
+        seen.add(base)
+        items.append({"url": base + "!s2", "title": keyword, "width": None, "height": None})
     return items[:per_page]
 
 
@@ -1270,10 +1271,21 @@ def search_twitter_page(keyword, page, per_page=20):
 
 
 def search_pixiv_page(keyword, page, per_page=20):
-    """Pixiv 插画: cookie + AJAX 搜索（需配置 PIXIV_PHPSESSID，R18 需在设置开启）"""
+    """Pixiv 插画: cookie + AJAX 站内搜索 (需要 PIXIV_PHPSESSID, R18 需登录)"""
     from pixiv_svc import search_pixiv
 
-    return search_pixiv(keyword, max(page - 1, 0) + 1, per_page)
+    items = search_pixiv(keyword, max(page - 1, 0) + 1, per_page)
+    # 搜索结果给的是 250px 缩略/方形图，换成 img-master 1200px 大图（同域，Referer 不变）
+    for it in items:
+        u = it.get("url") or ""
+        m = re.match(
+            r"https://i\.pximg\.net/c/[^/]+/(?:(?:custom-)?thumb|img-master)/img/(.+?)"
+            r"(?:_(?:custom|square|master)\d+)?(\.\w+)$",
+            u,
+        )
+        if m:
+            it["url"] = f"https://i.pximg.net/img-master/img/{m.group(1)}_master1200{m.group(2)}"
+    return items
 
 
 def search_anime_pictures_page(keyword, page, per_page=20):
