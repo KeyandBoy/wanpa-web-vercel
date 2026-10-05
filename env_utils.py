@@ -162,3 +162,14 @@ def proxy():
 def proxies():
     p = proxy()
     return {"http": p, "https": p} if p else None
+
+
+def adult_proxy():
+    """成人源出站代理：ADULT_PROXY 只影响成人源，未配则回落全局 PROXY。"""
+    p = env("ADULT_PROXY") or proxy()
+    return p or None
+
+
+def adult_proxies():
+    p = adult_proxy()
+    return {"http": p, "https": p} if p else None

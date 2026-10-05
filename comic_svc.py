@@ -120,7 +120,7 @@ SEARCH_PARAMS = {"f": "_all", "s": "create_time_DESC", "syn": "yes"}
 
 def _proxy():
     try:
-        from env_utils import proxy as _p
+        from env_utils import adult_proxy as _p
 
         return _p()
     except Exception:

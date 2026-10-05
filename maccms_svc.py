@@ -96,7 +96,7 @@ def _decrypt(text):
 def _fetch(url, timeout=20):
     """抓取页面并解密为正常 HTML；无加密 div 时原样返回"""
     try:
-        from env_utils import proxies as _proxies
+        from env_utils import adult_proxies as _proxies
 
         proxies = _proxies()
     except Exception:

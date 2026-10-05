@@ -21,10 +21,10 @@ _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0
 
 
 def _proxy():
-    """出站代理。Vercel 上由 PROXY 环境变量或「设置」面板提供。"""
-    from env_utils import proxy as _env_proxy
+    """出站代理。成人源优先 ADULT_PROXY（Vercel Environment Variables 或「设置」面板），回落 PROXY。"""
+    from env_utils import adult_proxy as _env_adult
 
-    return _env_proxy()
+    return _env_adult()
 
 
 def _fetch(url, timeout=20):

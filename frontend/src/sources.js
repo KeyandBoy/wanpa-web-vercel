@@ -143,7 +143,7 @@ export const SOURCE_GROUPS = [
       {
         id: 'anime-pictures',
         label: 'Anime-Pictures',
-        desc: 'Anime-Pictures 日系动漫图库。高清插画/壁纸，支持英文标签（如 cat、blue_archive），返回 AVIF 大图；需海外网络。',
+        desc: 'Anime-Pictures 日系动漫图库。高清插画/壁纸，支持英文标签（如 cat、blue_archive），返回 AVIF 大图；需海外网络。被拦时可配 ADULT_PROXY 换出口。',
         tag: '动漫',
         tier: 'plus'
       },
@@ -179,21 +179,21 @@ export const SOURCE_GROUPS = [
       {
         id: 'foamgirl',
         label: 'FoamGirl',
-        desc: 'FoamGirl，亚洲性感美女写真图站，关键词搜索返回原图；需海外网络。',
+        desc: 'FoamGirl，亚洲性感美女写真图站，关键词搜索返回原图；需海外网络。出站代理：Vercel 环境变量 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配回落 PROXY）。',
         tag: '写真',
         tier: 'plus'
       },
       {
         id: 'xxknit',
         label: '爱妹国',
-        desc: '爱妹国（写真/Cosplay 图集）中文站。关键词搜图集，返回封面图；需海外网络。',
+        desc: '爱妹国（写真/Cosplay 图集）中文站。关键词搜图集，返回封面图；需海外网络。被拦时可配 ADULT_PROXY 换出口。',
         tag: '写真',
         tier: 'plus'
       },
       {
         id: 'pornhub',
         label: 'Pornhub',
-        desc: '成人内容！Pornhub 视频封面图提取，适合视频题材封面素材；需海外节点。',
+        desc: '成人内容！Pornhub 视频封面图提取，适合视频题材封面素材；需海外节点。出站代理：Vercel 环境变量 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配回落 PROXY）。',
         tag: '成人',
         adult: true,
         tier: 'plus'
@@ -201,7 +201,7 @@ export const SOURCE_GROUPS = [
       {
         id: 'pornhub-albums',
         label: 'Pornhub图集',
-        desc: '成人内容！Pornhub 相册图集，关键词搜索返回图集内高清大图；需海外节点。',
+        desc: '成人内容！Pornhub 相册图集，关键词搜索返回图集内高清大图；需海外节点。出站代理：Vercel 环境变量 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配回落 PROXY）。',
         tag: '成人',
         adult: true,
         tier: 'plus'
@@ -209,7 +209,7 @@ export const SOURCE_GROUPS = [
       {
         id: 'pornpics',
         label: 'PornPics',
-        desc: '成人内容！PornPics 色情图片搜索站，关键词搜索返回图片；需海外节点。',
+        desc: '成人内容！PornPics 色情图片搜索站，关键词搜索返回图片；需海外节点。出站代理：Vercel 环境变量 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配回落 PROXY）。',
         tag: '成人',
         adult: true,
         tier: 'plus'
@@ -217,7 +217,7 @@ export const SOURCE_GROUPS = [
       {
         id: 'photos18',
         label: 'Photos18',
-        desc: '成人内容！Photos18 色情图片站，关键词搜索返回图片；需海外节点。',
+        desc: '成人内容！Photos18 色情图片站，关键词搜索返回图片；需海外节点。出站代理：Vercel 环境变量 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配回落 PROXY）。',
         tag: '成人',
         adult: true,
         tier: 'plus'
@@ -225,7 +225,7 @@ export const SOURCE_GROUPS = [
       {
         id: 'asiantolick',
         label: 'AsianToLick',
-        desc: '成人内容！AsianToLick 亚洲色情图片站，关键词搜索返回原图；需海外节点。',
+        desc: '成人内容！AsianToLick 亚洲色情图片站，关键词搜索返回原图；需海外节点。出站代理：Vercel 环境变量 ADULT_PROXY=http://user:pass@host:port（只影响成人源，未配回落 PROXY）。',
         tag: '成人',
         adult: true,
         tier: 'plus'

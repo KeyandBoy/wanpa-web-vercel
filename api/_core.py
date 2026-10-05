@@ -239,6 +239,12 @@ def _img_error(url, e):
     host = url.split("/")[2].split(":")[0]
     msg = str(e)
     low = msg.lower()
+    try:
+        from main_engine import _is_adult_url
+
+        adult = _is_adult_url(url)
+    except Exception:
+        adult = False
     if "timed out" in low or "timeout" in low:
         return f"下载超时: {host}"
     if "nameresolution" in low or "name or service not known" in low or "getaddrinfo" in low:
@@ -247,7 +253,10 @@ def _img_error(url, e):
         return f"连接失败: {host}"
     m = re.match(r"(\d{3})", msg)
     if m:
-        return f"上游返回 HTTP {m.group(1)}: {host}"
+        out = f"上游返回 HTTP {m.group(1)}: {host}"
+        if adult and m.group(1) in ("403", "407", "429"):
+            out += "（成人源被拦可配 ADULT_PROXY 换出口）"
+        return out
     return f"{host}: {msg[:100]}"
 
 

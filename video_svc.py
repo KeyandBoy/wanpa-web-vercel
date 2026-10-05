@@ -87,9 +87,9 @@ def _proxy_dict():
 
 def _adult_proxy():
     """成人源出站代理：ADULT_PROXY 只影响成人源，未配则回落全局 PROXY。"""
-    from env_utils import env as _env
+    from env_utils import adult_proxy as _env_adult
 
-    return _env("ADULT_PROXY") or _proxy()
+    return _env_adult()
 
 
 # m3u8 直链 -> 页面 URL 映射（用于给 CDN 分片补正确的 Referer）

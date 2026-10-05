@@ -31,17 +31,46 @@ HEADERS = {
 WATERMARK_MARKS = ("watermark", "shuiyin", "logo", "mark", "sign")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 
+# 成人源域名（图片搜索/图床下载）：这些域名优先走 ADULT_PROXY，未配回落 PROXY。
+_ADULT_HOST_SUFFIXES = (
+    "pornhub.com", "phncdn.com", "pornpics.com", "photos18.com",
+    "asiantolick.com", "knit.bid", "foamgirl.net", "xiurenai.com", "afxfl.com",
+    "meitulu.me", "xsnvshen.com", "xsnvshen.co", "anime-pictures.net",
+    "pixiv.net", "pximg.net", "qvujkzrd.cc", "hhe62.com", "xhamster.com",
+    "wnacg.com", "wnacg.org", "177picyy.com", "ho5ho.com", "caitlin.top",
+    "rokuhentai.com", "h-webtoon.com", "cartoon18.com", "xhentai888.xyz",
+    "sexacg.xyz", "hentaiclap.com", "hentairun.com", "allporncomic.com",
+    "8muses.io", "ilikecomix.com",
+)
+
+
+def _is_adult_url(url):
+    try:
+        host = url.split("/")[2].lower().split(":")[0]
+    except (IndexError, ValueError):
+        return False
+    return any(host == s or host.endswith("." + s) for s in _ADULT_HOST_SUFFIXES)
+
+
+def _pick_proxies(url, session=None):
+    """成人域名走 ADULT_PROXY；其余仅在没有显式 session 时吃全局 PROXY。"""
+    try:
+        if _is_adult_url(url):
+            from env_utils import adult_proxies as _pick
+
+            return _pick()
+        if session is not None:
+            return None
+        from env_utils import proxies as _pick
+
+        return _pick()
+    except Exception:
+        return None
+
 
 def http_get(url, params=None, timeout=20, retries=3, session=None, verify=True, headers=None):
     last = None
-    proxies = None
-    if session is None:
-        try:
-            from env_utils import proxies as _proxies
-
-            proxies = _proxies()
-        except Exception:
-            proxies = None
+    proxies = _pick_proxies(url, session)
     for i in range(retries):
         try:
             client = session if session is not None else requests
@@ -73,13 +102,7 @@ def http_get_browser(url, params=None, timeout=20, retries=2, session=None, head
         try:
             from curl_cffi import requests as creq
 
-            proxies = None
-            try:
-                from env_utils import proxies as _proxies
-
-                proxies = _proxies()
-            except Exception:
-                proxies = None
+            proxies = _pick_proxies(url, session)
             r = creq.get(
                 url,
                 params=params,
@@ -90,7 +113,15 @@ def http_get_browser(url, params=None, timeout=20, retries=2, session=None, head
             )
             if r.status_code == 200:
                 return r
-            last = ValueError(f"HTTP {r.status_code} 反爬拦截{'（出口已走代理仍被拦）' if proxies else '（未配置 PROXY）'}")
+            not_cfg = (
+                "（未配置 ADULT_PROXY/PROXY）"
+                if _is_adult_url(url)
+                else "（未配置 PROXY）"
+            )
+            last = ValueError(
+                f"HTTP {r.status_code} 反爬拦截"
+                f"{'（出口已走代理仍被拦）' if proxies else not_cfg}"
+            )
         except Exception as e:
             last = e
         time.sleep(1)

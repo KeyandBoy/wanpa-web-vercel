@@ -33,8 +33,12 @@ def _config(name, default=""):
 
 
 def _proxies():
-    proxy = _config("PROXY")
-    return {"http": proxy, "https": proxy} if proxy else None
+    try:
+        from env_utils import adult_proxies as _ap
+
+        return _ap()
+    except Exception:
+        return None
 
 
 def _get_json(url, params=None, retries=2):
