@@ -1719,6 +1719,119 @@ def search_youku(keyword, count):
     return items
 
 
+def _serp_mgtv(keyword):
+    """芒果TV 站内接口失效时的兜底：Brave → 360 → Bing 搜 site:mgtv.com 拿真实播放页链接。"""
+    for attempt in range(2):
+        try:
+            r = _fetch_proxied(
+                "https://search.brave.com/search",
+                params={"q": "site:mgtv.com " + keyword, "count": 30},
+                timeout=25,
+            )
+            if getattr(r, "status_code", 200) == 200:
+                items = _parse_serp_mgtv_brave(r.text or "")
+                if items:
+                    return items
+        except Exception:
+            pass
+        if attempt == 0:
+            time.sleep(3)
+    # 360 对机房出口友好（直连优先），结果真实链接在 data-mdurl 属性里
+    for attempt in range(2):
+        try:
+            r = _fetch_any(
+                "https://www.so.com/s",
+                params={"q": "site:mgtv.com " + keyword, "pn": 1},
+                timeout=25,
+            )
+            if getattr(r, "status_code", 200) == 200:
+                items = _parse_serp_mgtv_360(r.text or "")
+                if items:
+                    return items
+        except Exception:
+            pass
+        if attempt == 0:
+            time.sleep(2)
+    for attempt in range(2):
+        try:
+            r = _fetch_proxied(
+                "https://www.bing.com/search",
+                params={"q": "site:mgtv.com " + keyword, "count": 30},
+                timeout=25,
+            )
+            if getattr(r, "status_code", 200) == 200:
+                items = _parse_serp_mgtv_bing(r.text or "")
+                if items:
+                    return items
+        except Exception:
+            pass
+        if attempt == 0:
+            time.sleep(3)
+    return []
+
+
+def _mgtv_item(url, title):
+    """归一化 mgtv 播放页链接（w./m. 移动域名换 www、去掉追踪参数）并组装结果。"""
+    url = url.split("#")[0].split("?")[0].strip()
+    m = re.match(r"https?://(?:w|m)\.mgtv\.com(/b/\d+/\d+\.html)$", url)
+    if m:
+        url = "https://www.mgtv.com" + m.group(1)
+    m = re.match(r"https?://(?:www\.)?mgtv\.com(/b/\d+/\d+\.html)$", url)
+    if not m:
+        return None
+    url = "https://www.mgtv.com" + m.group(1)
+    title = re.sub(r"\s+", " ", html_unescape(re.sub(r"<[^>]+>", "", title or ""))).strip()
+    if not title:
+        return None
+    for suf in (" - 芒果TV", "｜芒果TV", "|芒果TV", "— 芒果TV", "_芒果TV", "－芒果TV",
+                "-芒果TV", "芒果TV-", " 芒果TV"):
+        if title.endswith(suf):
+            title = title[: -len(suf)].strip()
+    return {
+        "title": title[:200],
+        "url": url,
+        "duration": None,
+        "duration_text": "",
+        "thumb": None,
+        "source": "mgtv",
+    }
+
+
+def html_unescape(s):
+    from html import unescape as _u
+
+    return _u(s or "")
+
+
+def _parse_serp_mgtv_common(text, pat):
+    out, seen = [], set()
+    for m in re.finditer(pat, text, re.S):
+        url, inner = m.group(1), m.group(2)
+        if url in seen:
+            continue
+        it = _mgtv_item(url, re.sub(r'title="[^"]*"', "", inner))
+        if not it:
+            continue
+        seen.add(it["url"])
+        out.append(it)
+    return out
+
+
+def _parse_serp_mgtv_brave(text):
+    pat = r'<a[^>]+href="(https?://(?:www\.)?mgtv\.com/b/\d+/\d+\.html[^"]*)"[^>]*>(.*?)</a>'
+    return _parse_serp_mgtv_common(text, pat)
+
+
+def _parse_serp_mgtv_360(text):
+    pat = r'<a[^>]+data-mdurl="(https?://[^"]*mgtv\.com/b/\d+/\d+[^"]*)"[^>]*>(.*?)</a>'
+    return _parse_serp_mgtv_common(text, pat)
+
+
+def _parse_serp_mgtv_bing(text):
+    pat = r'<h2[^>]*><a[^>]+href="(https?://(?:www\.)?mgtv\.com/b/\d+/\d+\.html[^"]*)"[^>]*>(.*?)</a>'
+    return _parse_serp_mgtv_common(text, pat)
+
+
 def search_mgtv(keyword, count):
     from curl_cffi import requests as cr
 
@@ -1741,6 +1854,7 @@ def search_mgtv(keyword, count):
         "psize": 20,
         "cname": "all",
     }
+    items = []
     try:
         r = cr.get(
             "https://pianku.api.mgtv.com/rider/list/pcweb/v3",
@@ -1753,31 +1867,41 @@ def search_mgtv(keyword, count):
             impersonate="chrome131",
         )
         d = r.json()
-    except Exception as e:
-        raise ValueError(f"芒果TV搜索失败: {e}") from e
-    items = []
-    for v in (d.get("data") or {}).get("hitDocs") or []:
-        title = (v.get("title") or "").strip()[:200]
-        clip = v.get("clipId")
-        part = v.get("playPartId")
-        if not title or not clip or not part:
-            continue
-        items.append(
-            {
-                "title": title,
-                "url": f"https://www.mgtv.com/b/{clip}/{part}.html",
-                "duration": None,
-                "duration_text": "",
-                "thumb": v.get("img"),
-                "source": "mgtv",
-            }
-        )
-        if len(items) >= count:
-            break
-    if not items:
+        for v in (d.get("data") or {}).get("hitDocs") or []:
+            title = (v.get("title") or "").strip()[:200]
+            clip = v.get("clipId")
+            part = v.get("playPartId")
+            if not title or not clip or not part:
+                continue
+            items.append(
+                {
+                    "title": title,
+                    "url": f"https://www.mgtv.com/b/{clip}/{part}.html",
+                    "duration": None,
+                    "duration_text": "",
+                    "thumb": v.get("img"),
+                    "source": "mgtv",
+                }
+            )
+    except Exception:
+        items = []
+    # 站内接口已改版：任何关键词都返回同一份热榜（与关键词无关）→ 过滤后仍空则走搜索通道兜底
+    kw = (keyword or "").strip()
+    relevant = [i for i in items if kw and kw in i["title"]] if kw else []
+    if not relevant:
+        serp = _serp_mgtv(kw)
+        if serp:
+            relevant = serp
+    if not relevant:
+        if items:
+            raise ValueError(
+                "芒果TV 站内搜索接口已改版（返回热榜与关键词无关），"
+                "备用搜索通道也没拿到结果。"
+            )
         raise ValueError("芒果TV没有搜索到结果")
-    _translate_items(items)
-    return items
+    relevant = relevant[:count]
+    _translate_items(relevant)
+    return relevant
 
 
 def _resolve_xhamster(url):
