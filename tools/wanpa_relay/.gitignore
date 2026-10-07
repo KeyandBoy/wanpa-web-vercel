@@ -1,0 +1,7 @@
+# 运行时产物与机密，绝不入库
+creds.json
+state.json
+tunnel_url.txt
+*.log
+cloudflared.exe
+__pycache__/
