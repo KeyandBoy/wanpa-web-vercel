@@ -1,0 +1,137 @@
+========================================================================
+任务 03：把 relay 中转迁到安卓手机（Termux）
+TASK 03: Migrate relay to Android phone (Termux)
+========================================================================
+
+【1】任务ID / 名称 / 状态 / 最后更新 / HEAD / 验收结论
+------------------------------------------------------------------------
+任务ID    : 03
+任务名称  : 手机 Termux 迁移中转（把任务01 的 PC relay 搬到安卓手机）
+所属仓库  : E:\computerProgram2\wanpaweb vercel版（工具链在 tools\wanpa_relay\）
+状态      : 未开始（方案已定、决策已做完，代码与部署均未动）
+最后更新  : 2026-10-08
+HEAD      : —（无专属提交）
+验收结论  : —
+
+【2】目标
+------------------------------------------------------------------------
+当前任务01 的中转依赖 PC 开机 + clash 在线。目标：把 relay + cloudflared 隧道
+搬到安卓手机上 24 小时常驻，让 pornpics/xxknit 不再依赖 PC。
+
+【3】硬性约束
+----------------------------------------------------------------========
+- 只读 E:\computerProgram2\GetPhoto\（除非本任务明确需要解禁某个文件）
+  —— 注意：GetPhoto\DEPLOY_ANDROID.md 与 GetPhoto\termux sshd.bat 是手机部署的
+     参考资料，读取可用；写入需用户解禁
+- 绝不打印：密码/token/cookie/机场订阅URL/隧道完整地址/creds.json 内容
+- 临时脚本写 .py 放 C:\Users\43590\AppData\Local\Temp\opencode\ 再 python -X utf8 跑
+- 迁移前后都要跑线上验收（见【8】）
+- 本地代理 http://127.0.0.1:7897（clash，仅 PC 端；手机端用 ClashMetaForAndroid）
+
+【4】关键路径（已存在，待改动）
+------------------------------------------------------------------------
+待改成跨平台的文件（仓库 tools\wanpa_relay\，运行副本 C:\wanpa_relay\）：
+  relay.py:23     UPSTREAM = ("127.0.0.1", 7897) —— 写死 PC clash 端口，手机需改读环境变量
+                  建议：RELAY_UPSTREAM（VPN 全局模式下留空 = 直连走 VPN）
+  relay.py:190    _fetch_api —— 目前 proxies 写死 127.0.0.1:7897，同上需可配
+  supervisor.py:23  REPO = r"E:\computerProgram2\wanpaweb vercel版" —— Windows 路径，手机要可配
+  supervisor.py:84  ensure_relay() —— 用了 subprocess.CREATE_NO_WINDOW | DETACHED_PROCESS（Windows 专属）
+                  需加 os.name == "nt" 判断
+  supervisor.py:210 kill_cloudflared() —— 用 taskkill /IM cloudflared.exe（Windows 专属）
+                  非 Windows 需改 pkill -f cloudflared
+  cf_start.py:10   EXE = cloudflared.exe（Windows 路径）—— 需改 shutil.which("cloudflared")
+  cf_start.py:31   taskkill —— 同上需平台判断
+  cf_start.py:43   creationflags —— 同上需平台判断
+
+手机侧参考资料（只读，GetPhoto 仓库内）：
+  E:\computerProgram2\GetPhoto\DEPLOY_ANDROID.md —— 完整 Termux 部署指南
+      · Termux 必须装 F-Droid 版（Google Play 版停维护）
+      · pkg install python python-pip ffmpeg git openssh rust binutils
+      · pip install requests beautifulsoup4 Pillow yt-dlp lxml opencc-python-reimplemented
+      · curl_cffi 编译较久，需 libcurl4-openssl-dev
+  E:\computerProgram2\GetPhoto\termux sshd.bat —— 手机 SSH 连接信息（见【9】）
+
+【5】已完成（可追溯）
+------------------------------------------------------------------------
+- 2026-10-06  决策1：不做固定域名隧道 —— 需把 whiskhub.top 的 NS 从阿里云万网
+    （dns11/dns12.hichina.com）迁到 Cloudflare，会牵动线上域名，风险不划算
+- 2026-10-07  决策2：不用 bore —— 下载成功但 Defender 拦截，且不绕过杀软
+- 2026-10-07  决策3：弃用 serveo —— 实测 CONNECT 200 到不了客户端、端口静默黑盒
+- 2026-10-08  决策4（用户已选）：手机科学上网用 ClashMetaForAndroid（图形界面导订阅、开 VPN）
+- 2026-10-08  决策5（用户已选）：地址更新自动化用 Vercel API + Deploy Hook
+    （手机只跑 Python 发 HTTP，不装 node/git）
+- 2026-10-08  确认手机常驻条件：24 小时插电联网
+- 2026-10-08  确认任务归属：各项目任务放各自 TASKS 文件夹，本任务归 wanpaweb vercel版
+
+【6】进行中 & 下一步（有序，可直接执行）
+------------------------------------------------------------------------
+第 0 步：代码跨平台化（PC 上先做，提交入库）
+  1. relay.py 上游代理改读环境变量 RELAY_UPSTREAM（Windows 默认 127.0.0.1:7897；手机 VPN 模式留空）
+  2. cf_start.py：cloudflared 路径改 shutil.which("cloudflared")；
+     creationflags 与 taskkill 用 os.name == "nt" 分支
+  3. supervisor.py：REPO 路径改可配；creationflags / taskkill 加平台分支；
+     vercel_env_update + trigger_redeploy 换成 Vercel REST API（改 env）+ Deploy Hook（触发重部署）
+  4. 在 PC 上跑一轮验收确认没改坏
+
+第 1 步：手机端准备（用户在手机上操作）
+  5. 装 F-Droid 版 Termux + Termux:Boot
+  6. 装 ClashMetaForAndroid，导入机场订阅并开启 VPN（全局模式）
+  7. Termux 内：pkg update && pkg install -y python git cloudflared
+     （cloudflared 若无包则下 GitHub 的 cloudflared-linux-arm64）
+  8. pip install requests
+  9. 手机设置：termux-wake-lock 上锁 + 关闭 Termux 电池优化 +
+     各大厂系统里允许 Termux 自启动/后台无限制
+
+第 2 步：部署 relay 到手机
+ 10. 把 tools\wanpa_relay\{relay,supervisor,cf_start}.py 与 creds.json 传到手机
+     （creds.json 含 user/pass/path，走安全通道，勿走公开渠道）
+ 11. 手机上设 RELAY_UPSTREAM 留空（靠 ClashMetaForAndroid VPN），
+     并配好 VERCEL_TOKEN 与 DEPLOY_HOOK_URL 环境变量（值不打印）
+ 12. 手机上启动 supervisor → 生成新隧道 URL → 自动改 Vercel ADULT_RELAY + 重部署
+
+第 3 步：切换与验收（关键：不能两边同时跑）
+ 13. 【重要】停掉 PC 上的 supervisor，否则两台会互相抢改环境变量、反复重部署
+ 14. 跑线上验收（【8】），确认 pornpics/xxknit 恢复、其他源不受影响
+ 15. 用 Termux:Boot 脚本（~/.termux/boot/）实现手机开机自启
+
+第 4 步：归档更新
+ 16. 更新本文件的 状态/HEAD/验收结论（见【1】）
+
+【7】环境事实 / 已知坑
+------------------------------------------------------------------------
+- 手机厂商（小米/华为/OPPO/vivo）后台杀进程很狠，
+  必须同时做「电池无限制 + 允许自启动 + termux-wake-lock + Termux:Boot」，否则会莫名掉线
+- 手机重启靠 Termux:Boot 自恢复；网络波动会换隧道 URL，
+  所以第 11 步的自动更新（Vercel API + Deploy Hook）是必需品，不是可选项
+- 手机是住宅/蜂窝 IP，对成人站比 VPS 友好得多（Vercel 是数据中心 IP 才被封）
+- 用 Vercel API 改 env 需要一个 VERCEL_TOKEN（建议最小权限、可随时吊销）；
+  用 Deploy Hook 触发重部署则不需要 token
+- cloudflared quick tunnel 出的是 HTTP 隧道，不支持 CONNECT 当代理用，
+  所以沿用任务01 的「取回 API」设计（GET /<secret>/fetch?u=...），不要改成正向代理
+- iOS 不可行（不给长时间后台），只考虑安卓
+- Cloudflare 固定域名隧道需 NS 迁移，已排除（见【5】决策1）
+- serveo / bore 已排除（见【5】决策2、3）
+
+【8】验收命令（原样可跑）
+------------------------------------------------------------------------
+沿用任务01 的 verify_round9.py：
+  python -X utf8 C:\Users\43590\AppData\Local\Temp\opencode\verify_round9.py
+期望：==== 15 OK / 0 FAIL ====
+
+迁移专项加测（确认链路真的走手机）：
+  1. 对比切换前后 relay.log 的 fetch 条目（手机侧日志在手机上）
+  2. 观察 Vercel env ADULT_RELAY 的值是否被 supervisor 自动改写
+  3. 手机断网/关 WiFi，观察线上 pornpics 是否回落失败（证明确实经手机）
+
+【9】相关文件位置（敏感信息只写在哪、不写值）
+------------------------------------------------------------------------
+- 工具链源码（待改）: E:\computerProgram2\wanpaweb vercel版\tools\wanpa_relay\
+      {relay,supervisor,cf_start}.py + .gitignore
+- PC 运行副本: C:\wanpa_relay\（同名三件套 + cloudflared.exe + 凭据/状态/日志）
+- 凭据: C:\wanpa_relay\creds.json —— user / pass / path 三字段（迁移时需传到手机）
+- Vercel env 变量名: ADULT_RELAY（现值 = PC 隧道URL + "/" + path 密钥）
+- 需新增的手机侧环境变量: RELAY_UPSTREAM、VERCEL_TOKEN、DEPLOY_HOOK_URL（值均不打印）
+- 手机 SSH 信息: E:\computerProgram2\GetPhoto\termux sshd.bat（IP / 端口 / 用户名）
+- 手机部署指南: E:\computerProgram2\GetPhoto\DEPLOY_ANDROID.md
+- 本机 known_hosts 已有该手机记录，说明 PC 曾连过它
+- PC 端自启: HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WanpaRelay

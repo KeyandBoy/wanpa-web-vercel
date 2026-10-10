@@ -1,0 +1,118 @@
+========================================================================
+任务 02：芒果TV 逆向站内搜索接口
+TASK 02: MangoTV reverse-engineered site search API
+========================================================================
+
+【1】任务ID / 名称 / 状态 / 最后更新 / HEAD / 验收结论
+------------------------------------------------------------------------
+任务ID    : 02
+任务名称  : 芒果TV 逆向 so.mgtv.com /pc/search/v2（md5 签名）
+所属仓库  : E:\computerProgram2\wanpaweb vercel版
+状态      : 已完成（v2 API 已是主通道，SERP 为兜底）
+最后更新  : 2026-10-05
+HEAD      : 7b909d7（代码）；此前 f1e8252 是相关性过滤+SERP 兜底那一笔
+验收结论  : verify_round8 = 7/7（5 个关键词 + bilibili/youku 回归）
+
+【2】目标
+------------------------------------------------------------------------
+mgtv 视频搜索源：旧站内接口 pianku.api.mgtv.com 返回的是热榜、与关键词无关。
+目标：拿到真正按关键词返回的芒果TV 站内搜索结果，且链接是真实可播放的 mgtv 页面。
+
+【3】硬性约束
+----------------------------------------------------------------========
+- 只读 E:\computerProgram2\GetPhoto\
+- 绝不打印密钥（本任务涉及的 secret 属于公开前端资源，但不要在日志里刷屏）
+- 临时脚本写 .py 放 C:\Users\43590\AppData\Local\Temp\opencode\ 再 python -X utf8 跑
+- 验收打线上（本地 SERP 通道会被限流）
+- 本地代理 http://127.0.0.1:7897
+
+【4】关键路径
+------------------------------------------------------------------------
+video_svc.py:1286  _fetch_any(url, params, timeout) —— 优先无代理直连，失败再走代理
+                    （360 so.com 需要能直连才稳，故优先直连）
+video_svc.py:1722  _serp_mgtv(keyword) —— SERP 兜底：Brave → 360 → Bing
+video_svc.py:1773  _mgtv_item(url, title) —— 归一化：w./m. → www、剥查询串、剥「- 芒果TV」后缀
+video_svc.py:1806  _parse_serp_mgtv_common(text, pat) —— 通用正则解析
+video_svc.py:1820  _parse_serp_mgtv_brave(text)
+video_svc.py:1825  _parse_serp_mgtv_360(text) —— 用 data-mdurl 属性拿真实 URL
+video_svc.py:1830  _parse_serp_mgtv_bing(text) —— <h2[^>]*><a[^>]+href= 结构
+video_svc.py:1835  _MGTV_SO_SECRET = "xHAa3YZflWLogZUOzl"  ← 逆向所得
+video_svc.py:1836  _MGTV_SAFE = ";, /?:@&=+$-_.!~*'()#".replace(" ", "") —— encodeURI 的安全字符集
+video_svc.py:1839  _mgtv_sign(params) —— 签名：md5(secret + 按 key 排序的 encodeURI 查询串 + secret)
+video_svc.py:1861  _mgtv_items(contents) —— 解析 data.contents[]：
+                    type=video   → data.url（/b/cid/vid.html）+ updateInfo 时长
+                    type=program → data.yearList[*].sourceList[*].videoList[0].url（/b/）
+                                   或 sourceList 的 /h/ 链接
+                    type=movie   → sourceList 里找 mgtv 源（多为外链 qq/iqiyi），
+                                   没有就用 uuid → https://www.mgtv.com/h/{uuid}.html
+video_svc.py:1922  _mgtv_api_search(keyword, page, count) —— 调 /pc/search/v2 的主实现
+video_svc.py:1966  search_mgtv(keyword, count) —— 优先级链：
+                    v2 API → _search_mgtv_v3(相关性过滤兜底) → _serp_mgtv(SERP) → 抛「（站内接口与备用搜索通道均为空）」
+video_svc.py:1990  _search_mgtv_v3(kw) —— 旧接口 pianku.api.mgtv.com/rider/list/pcweb/v3
+                    保留，但按 kw in title 过滤（旧接口忽略关键词只回热榜）
+
+逆向事实（不必重做，直接可用）：
+  - 接口：GET https://mobileso.bz.mgtv.com/pc/search/v2
+    （mobileso.bz.mgtv.com 可用，code:200；pianku.api.mgtv.com 是旧的、忽略关键词）
+  - 另有 POST https://mobileso.bz.mgtv.com/pc/search/v1
+  - secret 来源：前端 chunk 2.6e76f43.js，文件里能搜到 /pc/search/v2 与 xHAa3YZflWLogZUOzl
+  - 签名模块 md5（RFC1321，module id 1300）
+  - 参数：{ src:mgtv, did:uuid32, timestamp:ISO秒, signVersion:1,
+            signNonce:uuid32(去横线), q, pn, pc, corr, signature }
+  - signature = md5(secret + sorted_by_key_encodeURI_qs + secret)
+  - 必带 header：Referer: https://so.mgtv.com/
+  - 实测 Python 的 ASCII 字典序排序被服务端接受
+  - 响应路径 data.contents[]
+
+【5】已完成（可追溯）
+------------------------------------------------------------------------
+- 2026-10-05 commit f1e8252  【C 兜底】旧站内接口改版返回热榜 → 加相关性过滤 +
+    Brave / 360 / Bing site:mgtv.com 三条搜索通道兜底拿真实播放页
+- 2026-10-05  逆向成功：定位 chunk 2.6e76f43.js，提取 secret，还原 md5 签名公式，
+    确认 mobileso.bz.mgtv.com/pc/search/v2 返回 code:200 且按关键词过滤
+- 2026-10-05 commit 7b909d7  v2 API 接为站内搜索【主通道】，
+    360/SERP 降级为兜底；旧 v3 接口保留为中间层兜底（带相关性过滤）
+- 2026-10-05  验收 verify_round8 = 7/7：
+    斗罗大陆 / 庆余年 / 甄嬛传 / 明星大侦探 / 快乐大本营 各 n>=6 且标题含关键词；
+    bilibili、youku 回归通过
+- 2026-10-07  verify_round9 里 mgtv 回归也通过（断言需同时接受 /b/ 与 /h/ 两种链接形态）
+
+【6】进行中 & 下一步
+------------------------------------------------------------------------
+无。可选后续增强（未做）：
+1. movie 类型目前回落到 /h/{uuid}.html，可进一步解析出具体播放页 /b/cid/vid.html
+2. SERP 兜底可补搜狗通道（web 风控未知，未验证）
+
+【7】环境事实 / 已知坑
+------------------------------------------------------------------------
+- 旧接口 pianku.api.mgtv.com/rider/list/pcweb/v3：忽略关键词，恒回热榜。
+  保留它是因为「接口有时反而更快」，但必须按 kw in title 过滤，否则全是不相关结果
+- Bing 本地（本机直连）site: 查询被降级忽略 → 必须打线上才能得到正确结果
+- 百度反爬：返回约 1488B 的安全页，不可用
+- 360 so.com 可用，但真实 URL 藏在 data-mdurl="https://w.mgtv.com/b/..." 属性里，
+  不能直接抓 <a href>（那是跳转链接）
+- 搜狗可达，但 web 风控不稳定，未纳入主通道
+- w.mgtv.com / m.mgtv.com 链接需归一化为 www，并剥掉查询串
+- /h/{uuid}.html 是 movie 类型的合法回落链接，实测返回 200
+  → 验收脚本必须同时匹配 /b/\d+/\d+\.html 和 /h/[0-9a-f]{32}\.html，
+     否则会误报 FAIL（round9 首轮就因此误报）
+
+【8】验收命令（原样可跑）
+------------------------------------------------------------------------
+线上（token 从仓库 .env.local 读 WANPA_MASTER_CODE 的分段试出）：
+  GET /api/video-search?keyword=<中文关键词>&source=mgtv
+判定：items 里存在 url 匹配 r"mgtv\.com/(?:b/\d+/\d+|h/[0-9a-f]{32})\.html"
+      且标题包含关键词
+
+本机脚本：
+  C:\Users\43590\AppData\Local\Temp\opencode\verify_round8.py
+  C:\Users\43590\AppData\Local\Temp\opencode\mgtv_chunks.json（逆向时的 chunk 列表）
+  跑法：python -X utf8 <脚本>
+
+【9】相关文件位置
+------------------------------------------------------------------------
+- 代码: E:\computerProgram2\wanpaweb vercel版\video_svc.py（符号见【4】）
+- secret 定义: video_svc.py:1835（已入库，非私密凭据，但不要在日志刷屏）
+- 验收脚本: C:\Users\43590\AppData\Local\Temp\opencode\verify_round8.py
+- token 来源: E:\computerProgram2\wanpaweb vercel版\.env.local 的 WANPA_MASTER_CODE
+              （多段逗号分隔，逐段试 /api/verify 取 token；勿打印值）

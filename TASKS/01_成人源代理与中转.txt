@@ -1,0 +1,190 @@
+========================================================================
+任务 01：成人源代理与中转
+TASK 01: Adult source egress proxy & relay
+========================================================================
+
+【1】任务ID / 名称 / 状态 / 最后更新 / HEAD / 验收结论
+------------------------------------------------------------------------
+任务ID    : 01
+任务名称  : 成人源代理与中转（ADULT_PROXY 代码改造 + cloudflared 取回中转）
+所属仓库  : E:\computerProgram2\wanpaweb vercel版（github.com/KeyandBoy/wanpa-web）
+状态      : 已完成，且本机中转链路仍在运行
+最后更新  : 2026-10-08
+HEAD      : 01a0adb（代码在 be59764，工具链在 d3568a6，之后 01a0adb 是 supervisor 自动空提交）
+验收结论  : 线上 verify_round9 = 15/15 全绿（pornpics 搜索+图片、xxknit 复活；
+            photos18/foamgirl/meitulu/xiurenai/pornhub/pixiv/pexels/wallhere/wikimedia/mgtv 全过）
+
+【2】目标
+------------------------------------------------------------------------
+线上成人图片源（pornpics、xxknit）被源站按 IP 封 Vercel 出口，导致搜索/下载失败。
+目标：让这些源在 Vercel 上恢复可用，且不影响已可用的其他成人源。
+
+【3】硬性约束
+------------------------------------------------------------------------
+- 只读 E:\computerProgram2\GetPhoto\（本任务未触碰该目录）
+- 绝不打印密钥：WANPA_MASTER_CODE / BLOB token / 代理账号密码 / 机场订阅 URL /
+  隧道完整地址 / creds.json 内容。日志必须打码（//user:***@）
+- 版本命名维持 Lite（免费）/ Plus（付费）
+- 临时脚本写 .py 放 C:\Users\43590\AppData\Local\Temp\opencode\ 再 python -X utf8 跑
+  （PowerShell 中文乱码：$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8）
+- 本地代理 http://127.0.0.1:7897（clash，无认证）
+- 线上验收 https://wanpa-web8811.whiskhub.top，push 后等 90~120s 再 curl
+- 本地 Brave 429 / DDG 超时 → 搜索类验证必须打线上
+
+【4】关键路径
+------------------------------------------------------------------------
+应用侧（已提交入库）：
+  main_engine.py:35   _ADULT_HOST_SUFFIXES —— 成人域名白名单（30 个后缀）
+  main_engine.py:47   _is_adult_url(url) —— 按域名后缀判定
+  main_engine.py:55   _pick_proxies(url, session) —— 成人走 adult_proxies()，其余无 session 才吃全局 PROXY
+  main_engine.py:71   _relay_eligible(url) —— 成人域名 且 配了 ADULT_RELAY 才为真
+  main_engine.py:83   _relay_fetch(url, params, timeout, headers, retries) —— 经中转取回，回填 X-Final-Url 到 r.url
+  main_engine.py:110  http_get(...) —— 主取回入口。关键改动：
+                        · relay_eligible 时跳过普通重试的 sleep（成人直连失败无意义，立即兜底）
+                        · 429 仍退避 5s*(i+1)
+                        · 循环走完若 relay_eligible → 调 _relay_fetch 兜底
+  main_engine.py:144  http_get_browser(...) —— curl_cffi 指纹重试（内部先调 http_get，故自动共享兜底）
+  main_engine.py:1159 search_pornpics_page(...) —— 用 http_get 取回（自动获益）
+  main_engine.py:1219 search_xxknit_page(...) —— 原本用 curl_cffi 直连绕过 http_get，
+                        已改为走 http_get（否则中转兜底对它无效）
+  api/_core.py:284    api_proxy(url) —— 图片下载走 http_get，自动共享中转兜底
+  env_utils.py:130    env(name) —— user_config(KV) → os.environ → dotenv 顺序
+  env_utils.py:167    adult_proxy()
+  env_utils.py:173    adult_proxies()
+  注：env_utils 依赖的 KV_REST_API_URL/KV_REST_API_TOKEN 在本地和 Vercel 均未配置
+      → 设置面板的 KV 不持久 → Vercel env 变更必须用 vercel CLI 改 + 重新部署才生效
+
+工具链侧（已入库到 tools\wanpa_relay\，运行副本在 C:\wanpa_relay\）：
+  tools\wanpa_relay\relay.py:22   LISTEN = ("127.0.0.1", 18082) —— 只监听本机
+  tools\wanpa_relay\relay.py:23   UPSTREAM = ("127.0.0.1", 7897) —— 上游固定 clash
+  tools\wanpa_relay\relay.py:24   ALLOW = (...) —— 成人域名白名单（与 main_engine 一致）
+  tools\wanpa_relay\relay.py:117  do_CONNECT —— 正向代理 CONNECT（Basic 认证）
+  tools\wanpa_relay\relay.py:147  _forward —— 绝对URI 转发（Basic 认证）
+  tools\wanpa_relay\relay.py:190  _fetch_api —— 核心：GET /<secret>/fetch?u=<urlencoded>
+                                    · path 密钥用 hmac.compare_digest 比对
+                                    · 白名单校验
+                                    · 转发 User-Agent/Accept/Accept-Language/Referer/Cookie/Range
+                                    · 上游经 clash 7897 抓取，allow_redirects=True
+                                    · 透传状态码 + Content-Type，自算 Content-Length，附 X-Final-Url
+                                    · 30MB 上限
+  tools\wanpa_relay\relay.py:260  do_GET —— 匹配 /<secret>/fetch 走 _fetch_api，否则走 _forward
+  tools\wanpa_relay\cf_start.py:10   EXE = cloudflared.exe（同目录）
+  tools\wanpa_relay\cf_start.py:11   URL_F = tunnel_url.txt（写解析出的 trycloudflare URL）
+  tools\wanpa_relay\cf_start.py:15   main() —— 先 taskkill 旧 cloudflared，再起新隧道，
+                                          轮询 cloudflared.log 提取 https://xxx.trycloudflare.com
+  tools\wanpa_relay\supervisor.py:23   REPO = r"E:\computerProgram2\wanpaweb vercel版"
+  tools\wanpa_relay\supervisor.py:30   MAX_DEPLOY_PER_DAY = 3 —— 防止反复重部署打满额度
+  tools\wanpa_relay\supervisor.py:62   relay_value() —— 隧道URL + "/" + creds.json 的 path 密钥 = ADULT_RELAY 完整值
+  tools\wanpa_relay\supervisor.py:84   ensure_relay() —— relay 不在就拉起
+  tools\wanpa_relay\supervisor.py:98   probe_tunnel(tun) —— 探测（任何 HTTP 响应含 407/403 都算通）
+  tools\wanpa_relay\supervisor.py:112  ensure_tunnel() —— 隧道失联就调 cf_start.py 重建
+  tools\wanpa_relay\supervisor.py:135  vercel_env_update(url) —— vercel env rm ADULT_RELAY -y → env add（stdin 传值，不打印）
+  tools\wanpa_relay\supervisor.py:159  trigger_redeploy() —— git commit --allow-empty "ops: ADULT_RELAY cloudflared" → git push
+  tools\wanpa_relay\supervisor.py:182  sync_env(url) —— 比对 state.json，变了才同步；含每日上限
+  tools\wanpa_relay\supervisor.py:210  kill_cloudflared() —— taskkill /IM cloudflared.exe /F
+  tools\wanpa_relay\supervisor.py:220  main() —— 主循环 15s：ensure_relay → probe → sync_env
+                                               连续探测失败 2 次 → 杀 cloudflared 重建
+  tools\wanpa_relay\.gitignore —— 排除 creds.json / state.json / tunnel_url.txt / *.log / cloudflared.exe
+
+【5】已完成（可追溯）
+------------------------------------------------------------------------
+- 2026-10-05 commit 3611c23  【A 步】代码改造：
+    env_utils 加 adult_proxy/adult_proxies；
+    main_engine 加 _ADULT_HOST_SUFFIXES/_is_adult_url/_pick_proxies，
+    http_get/http_get_browser 吃代理；
+    api/_core._img_error 对成人 403/407/429 提示「可配 ADULT_PROXY 换出口」；
+    video/doll/book/comic/maccms svc 代理统一；
+    frontend/src/sources.js 8 处 desc 补代理指引（bundle index-DP6R9obs.js）
+- 2026-10-05 commit f1e8252  【C 步】SERP 兜底：
+    _serp_mgtv 那次是芒果TV（见任务02）；本步是成人源侧 Brave→360→Bing 通道搭建
+    _parse_serp_mgtv_360 用 data-mdurl（so.com 可用、百度反爬、Bing 本地 site: 被降级）
+    verify_round7 = 19/19
+- 2026-10-06  发现 serveo 隧道不稳定：CONNECT 200 不达客户端、端口静默黑盒；
+    决定弃用，不绕过 Defender（bore.exe 被拦后未加杀软排除项）
+- 2026-10-06  测试 cloudflared quick tunnel：GET tun/ 返回 relay 的 407 = 链路通
+    本机端到端：pornpics 页 200/55093、cdni 图片 200/71247 image/jpeg、xxknit 200/90893
+    模拟 Vercel 失败（ADULT_PROXY 指向坏端口 127.0.0.1:9）→ _relay_fetch 兜底 200 成功
+- 2026-10-07 commit be59764  应用侧收口：
+    main_engine 加 _relay_eligible/_relay_fetch，http_get 加兜底；
+    search_xxknit_page 从 curl_cffi 直连改为走 http_get
+- 2026-10-07  写入 Vercel env ADULT_RELAY（production，Secret）
+    supervisor 首次 sync 触发空提交重部署（35437c6 / b916b6e / 667b4b6 / 0dc0549）
+- 2026-10-07 commit d3568a6  工具链入库：tools\wanpa_relay\{relay,supervisor,cf_start}.py + .gitignore
+- 2026-10-07  开机自启：schtasks 需提权失败 → 改用 HKCU Run 注册
+    HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WanpaRelay
+    值 = "D:\computerProgram\Anaconda\pythonw.exe" -X utf8 C:\wanpa_relay\supervisor.py
+    log() 已加 try 包 print，兼容 pythonw 无控制台
+- 2026-10-07  验收 verify_round9 = 15/15（详见【8】）
+- 2026-10-08 commit 01a0adb  supervisor 又一次自动空提交（隧道 URL 变化）
+    注：mgtv 斗罗大陆 首轮验收误报 FAIL —— 是验收脚本断言过严（只认 /b/ 链接），
+    实际返回合法的 /h/{uuid}.html 链接（movie 类型按设计走 uuid 回落），已修正断言后 15/15
+
+【6】进行中 & 下一步
+------------------------------------------------------------------------
+无未完成步骤。运行时维护事项：
+1. PC 关机 → relay 隧道失效 → pornpics/xxknit 恢复失败（其他源不受影响）
+2. 若 tunnel URL 变化，supervisor 会自动改 env 并重部署（每日限 3 次，超过会跳过只记日志）
+3. 若要迁到手机（见任务 03），先停 PC 上的 supervisor，避免两台抢改 env
+
+【7】环境事实 / 已知坑
+------------------------------------------------------------------------
+- 生产 Vercel env（vercel CLI 已登录 keyandboy）：
+    PIXIV_PHPSESSID / DEEPSEEK_KEY / WANPA_MASTER_CODE / BLOB_READ_WRITE_TOKEN / ADULT_RELAY
+    无 PROXY、无 ADULT_PROXY（A 步的代码改造留了回落，但线上没配这两个）
+- env 顺序：env_utils.env() = user_config(KV，不可用) → os.environ → dotenv
+    → 改 env 必须 vercel CLI + 重新部署
+- 成人源基线（线上直连 Vercel）：
+    可用：pornhub 20、photos18 20、foamgirl 20、meitulu 12、xiurenai 20
+    需中转：pornpics（RemoteDisconnected）、xxknit（403）
+    救不了（非 IP 问题，中转也没用）：
+      anime-pictures = Cloudflare「Just a moment」JS challenge（IP 换了也拦）
+      asiantolick = 站点已死（证书不匹配 / 443 拒连）
+      xsnvshen = 站点级防沉迷整站死
+      xhamster / wnacg = 非 /api/search 合法源（「不支持的数据源」是正常返回）
+- 免费公共中继全灭（从国内测）：r.jina.ai 超时、wsrv/weserv 403(CF)、
+    allorigins 超时/522、codetabs 503/522、corsproxy 401
+    （从 Vercel 测：r.jina.ai 403 需 key、wsrv.nl 400）
+- 隧道选型结论：
+    serveo —— 弃。固定端口 -R 41234 被拒（只支持 -R 0: 随机），
+              随机端口 CONNECT 200 到不了客户端、端口会静默黑盒，探测时灵时不灵
+    bore.pub —— 弃。下载成功但 Defender 判定拦截（决定不绕过 AV）
+    固定域名隧道 —— 需把 whiskhub.top 的 NS 迁到 Cloudflare
+                  （当前 NS = dns11/dns12.hichina.com 阿里云万网），
+                  会牵动线上域名，决定不做
+    cloudflared quick tunnel —— 采用。Cloudflare 官方签名，HTTP 隧道（不支持 CONNECT
+                  作为代理用），所以走「取回 API」而非「正向代理」
+- ADULT_RELAY 语义：完整值 = https://<随机>.trycloudflare.com/<path密钥>
+    应用侧在 URL 后拼 "/fetch?u=<urlencoded 目标URL>"
+- 线上部署限流：supervisor 每日最多触发 3 次空提交重部署，超过就只记日志不执行
+- mgtv 斗罗大陆 返回 /h/{uuid}.html 是【设计内】（movie 类型走 uuid 回落），
+    验收脚本必须同时接受 /b/ 和 /h/ 两种形态
+
+【8】验收命令（原样可跑）
+------------------------------------------------------------------------
+脚本：C:\Users\43590\AppData\Local\Temp\opencode\verify_round9.py
+跑法：python -X utf8 C:\Users\43590\AppData\Local\Temp\opencode\verify_round9.py
+期望：==== 15 OK / 0 FAIL ====
+
+覆盖点：
+  核心：pornpics 搜索 n>=5、pornpics 图片经中转 200、xxknit 搜索 n>=1
+  回归：photos18/foamgirl/meitulu/xiurenai/pornhub、pexels/pixiv(+图片)/wallhere/wikimedia
+  mgtv：/api/video-search?keyword=斗罗大陆&source=mgtv，
+        断言 re.search(r"mgtv\.com/(?:b/\d+/\d+|h/[0-9a-f]{32})\.html")
+
+补充探测（本机链路自检）：
+  relay 端口：Test-NetConnection 127.0.0.1 -Port 18082
+  隧道健康：requests.get(tun+"/") 期待 407（relay 的 Basic 认证拒绝）
+  线上健康：https://wanpa-web8811.whiskhub.top/api/health 期待 {"ok":true}
+
+【9】相关文件位置（敏感信息只写在哪、不写值）
+------------------------------------------------------------------------
+- 凭据: C:\wanpa_relay\creds.json —— 含 user / pass / path 三个字段（勿打印值）
+- 状态: C:\wanpa_relay\state.json —— 当前隧道完整 URL + 当日部署计数
+- 隧道URL: C:\wanpa_relay\tunnel_url.txt —— 当前 trycloudflare 域名
+- 运行日志: C:\wanpa_relay\relay.log、C:\wanpa_relay\supervisor.log、C:\wanpa_relay\cloudflared.log
+- 运行副本: C:\wanpa_relay\{relay,supervisor,cf_start}.py（与仓库 tools\wanpa_relay\ 同源）
+- cloudflared 二进制: C:\wanpa_relay\cloudflared.exe（未入库，54MB）
+- Vercel env 变量名: ADULT_RELAY（值 = 隧道URL + "/" + creds.json 的 path）
+- 中转上游 clash: http://127.0.0.1:7897（无认证）
+- 中转监听: 127.0.0.1:18082
+- 开机自启: HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WanpaRelay
