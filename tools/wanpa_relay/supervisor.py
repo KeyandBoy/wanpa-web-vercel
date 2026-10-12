@@ -31,7 +31,11 @@ MAX_DEPLOY_PER_DAY = 3
 NO_VERCEL = "--no-vercel" in sys.argv
 
 
-def log(msg):
+# 真实 quick tunnel 是三段以上子域；api.trycloudflare.com 只有单段，必须排除
+_TUNNEL_RE = re.compile(r"https://([a-z0-9]+-){2,}[a-z0-9]+\.trycloudflare\.com")
+
+
+def log(msg, tag=""):
     line = time.strftime("%m-%d %H:%M:%S ") + msg
     try:
         print(line, flush=True)
@@ -42,6 +46,22 @@ def log(msg):
             f.write(line + "\n")
     except Exception:
         pass
+    if tag:
+        _LOG_THROTTLE[tag] = (msg, time.time())
+
+
+# 同一条日志（如「每日已达上限」）在静默期内不重复写，避免日志被刷爆
+_LOG_THROTTLE = {}
+_SILENCE = 600
+
+
+def log_once(msg, tag):
+    """同一 tag 的相同内容在 _SILENCE 秒内只写一次。"""
+    prev = _LOG_THROTTLE.get(tag)
+    now = time.time()
+    if prev and prev[0] == msg and now - prev[1] < _SILENCE:
+        return
+    log(msg, tag)
 
 
 def load_state():
@@ -65,8 +85,8 @@ def relay_value():
         tun = open(URL_F, encoding="utf-8").read().strip()
     except Exception:
         return None
-    if "trycloudflare.com" not in tun:
-        return None
+    if not _TUNNEL_RE.fullmatch(tun.rstrip("/")):
+        return None  # 非法/被写坏的地址一律视为无效
     return tun + "/" + CREDS["path"]
 
 
@@ -95,23 +115,52 @@ def ensure_relay():
     time.sleep(2)
 
 
-def probe_tunnel(tun):
-    """quick tunnel 存活探测：任意 HTTP 响应（含 407/403）都算通。"""
+def _probe_once(tun):
     import urllib.error
+    import urllib.parse
     import urllib.request
 
+    base = (tun or "").rstrip("/")
+    if not _TUNNEL_RE.fullmatch(base):
+        return False
+    probe = (
+        base
+        + "/"
+        + CREDS["path"]
+        + "/fetch?u="
+        + urllib.parse.quote("http://probe.invalid/", safe="")
+    )
     try:
-        urllib.request.urlopen(tun + "/", timeout=8)
-        return True
-    except urllib.error.HTTPError:
-        return True
+        with urllib.request.urlopen(probe, timeout=8) as r:
+            code, body = r.status, r.read(256)
+    except urllib.error.HTTPError as e:
+        code, body = e.code, (e.read(256) if e.fp else b"")
     except Exception:
         return False
+    return code == 403 and b"host not allowed" in body
+
+
+def probe_tunnel(tun, retries=3):
+    """探测隧道是否真的通到本机 relay（决定性指纹，不是"随便有响应"）。
+
+    请求白名单外的域名，我们的 relay 会回 403「host not allowed」——
+    这是 relay 特有响应；404（如 api.trycloudflare.com）、502（relay 不通）、
+    连接失败都判为不通。
+
+    cloudflared 打印出 URL 后隧道要几秒才真正可用，所以连续重试几次。
+    """
+    for i in range(max(retries, 1)):
+        if _probe_once(tun):
+            return True
+        if i < retries - 1:
+            time.sleep(4)
+    return False
 
 
 def ensure_tunnel():
     val = relay_value()
-    if val and probe_tunnel(val.rsplit("/", 1)[0]):
+    # 旧隧道要么活着要么已死，单次探测即可；失败就尽快换新的
+    if val and probe_tunnel(val.rsplit("/", 1)[0], retries=1):
         return val
     log("启动 cloudflared 隧道 ...")
     try:
@@ -193,7 +242,10 @@ def sync_env(url):
         st["date"] = today
         st["deploys"] = 0
     if int(st.get("deploys") or 0) >= MAX_DEPLOY_PER_DAY:
-        log("今日部署已达上限(%d)，跳过；%s" % (MAX_DEPLOY_PER_DAY, masked(url)))
+        log_once(
+            "今日部署已达上限(%d)，跳过；%s" % (MAX_DEPLOY_PER_DAY, masked(url)),
+            "deploy_cap",
+        )
         return
     log("地址变化 -> 更新 Vercel: %s" % masked(url))
     if not vercel_env_update(url):
@@ -217,32 +269,47 @@ def kill_cloudflared():
         pass
 
 
+def _backoff(unhealthy):
+    """指数退避：30→60→120→240→300 秒封顶。
+    没有退避会每 15 秒反复重启 cloudflared，触发 trycloudflare 的 429 限流。"""
+    return min(30 * (2 ** max(unhealthy - 1, 0)), 300)
+
+
 def main():
     log("supervisor 启动 (no_vercel=%s)" % NO_VERCEL)
     fails = 0
+    unhealthy = 0
     while True:
         try:
             ensure_relay()
             if not port_open("127.0.0.1", CLASH_PORT):
-                log("clash(7897) 不在线（中转请求会失败，隧道照常保持）")
+                log_once("clash(7897) 不在线（中转请求会失败，隧道照常保持）", "clash")
             url = ensure_tunnel()
+            if url and probe_tunnel(url.rsplit("/", 1)[0]):
+                if unhealthy:
+                    log("隧道已恢复")
+                unhealthy = 0
+                fails = 0
+                sync_env(url)
+                time.sleep(15)
+                continue
+            unhealthy += 1
             if url:
-                if probe_tunnel(url.rsplit("/", 1)[0]):
+                fails += 1
+                log("隧道探测失败 %d" % fails)
+                if fails >= 2:
+                    kill_cloudflared()
                     fails = 0
-                    sync_env(url)
-                else:
-                    fails += 1
-                    log("隧道探测失败 %d/2" % fails)
-                    if fails >= 2:
-                        kill_cloudflared()
-                        fails = 0
-            time.sleep(15)
+            delay = _backoff(unhealthy)
+            log_once("隧道未就绪，退避 %d 秒后重试" % delay, "backoff")
+            time.sleep(delay)
         except KeyboardInterrupt:
             log("退出")
             break
         except Exception as e:
             log("循环异常: %r" % e)
-            time.sleep(15)
+            unhealthy += 1
+            time.sleep(_backoff(unhealthy))
 
 
 if __name__ == "__main__":
